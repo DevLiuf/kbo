@@ -124,6 +124,32 @@ npm run ml:retrain-daily -- --from=20260331 --to=20260405 --holdoutDays=3 --retr
 - 세이버 보정은 **튜닝(tuning)** 대상입니다. Markov/MonteCarlo 계산은 예측 시점마다 실행되고, 블렌드 가중치/클램프(예: `0.7/0.25/0.05`, `2.5`)를 백테스트로 조정합니다.
 - 운영 원칙: 라인업 갱신 시에는 재학습이 아니라 **재예측(inference)** 을 수행하고, ML 학습은 일일 배치(`ml:retrain-kbo`)로 반영합니다.
 
+### 보조 PC 원클릭 실행
+
+보조 PC에서 ML 학습 + 세이버 튜닝을 한 번에 실행:
+
+```bash
+npm run ml:helper-pc -- --from=20260331 --to=20260408 --baseUrl=https://kbo-predictor.vercel.app
+```
+
+`--to`를 생략하면 서울시간(Asia/Seoul) 기준 오늘 날짜로 자동 설정됩니다.
+
+```bash
+npm run ml:helper-pc -- --from=20260331 --baseUrl=https://kbo-predictor.vercel.app
+```
+
+실행 후 산출물:
+- `data/model_coefficients.kbo.json`
+- `data/saber_tuning_status.kbo.json`
+
+웹 배포 반영(보조 PC에서):
+
+```bash
+git add data/model_coefficients.kbo.json data/saber_tuning_status.kbo.json
+git commit -m "Update ML model and saber tuning outputs"
+git push
+```
+
 ## 배팅태그 수익성 백테스트
 
 - 목적: 카드의 `추천/주의/회피` 태그가 실제 수익(ROI) 관점에서 유효한지 검증합니다.

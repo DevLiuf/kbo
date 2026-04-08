@@ -1,12 +1,14 @@
 const { parseArgs, iterDates } = require("./ml-utils");
 
 const http = require("http");
+const https = require("https");
 const fs = require("fs/promises");
 const path = require("path");
 
 function fetchJson(url) {
+  const client = String(url).startsWith("https://") ? https : http;
   return new Promise((resolve, reject) => {
-    http
+    client
       .get(url, (res) => {
         let body = "";
         res.on("data", (chunk) => {

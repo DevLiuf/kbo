@@ -1666,9 +1666,15 @@ async function buildKboPredictionsForDate({
       playerHitterAdvancedMap,
     );
     const starterProfiles = await attachStarterPitcherProfiles(prediction, playerPitcherBasicMap);
+    const hasCompleteLineup = prediction.lineupDataReady
+      && Array.isArray(awayMetrics.lineup)
+      && Array.isArray(homeMetrics.lineup)
+      && awayMetrics.lineup.length >= 9
+      && homeMetrics.lineup.length >= 9;
 
     return {
       ...prediction,
+      lineupConfirmed: prediction.lineupConfirmed || hasCompleteLineup,
       awayLineup: awayMetrics.lineup,
       homeLineup: homeMetrics.lineup,
       ...starterProfiles,

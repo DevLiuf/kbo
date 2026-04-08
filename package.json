@@ -11,6 +11,7 @@
     "ml:eval": "node scripts/eval-logistic.js",
     "ml:retrain-daily": "node scripts/retrain-daily.js",
     "ml:retrain-kbo": "node scripts/retrain-daily.js",
+    "ml:helper-pc": "node scripts/helper-pc-train-and-tune.js",
     "ml:backfill-snapshots": "node scripts/backfill-snapshots.js",
     "ml:export-backtest": "node scripts/export-saber-backtest-details.js",
     "ml:export-betting-profit": "node scripts/export-betting-tag-profitability.js"
