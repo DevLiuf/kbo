@@ -47,6 +47,7 @@ const KBO_HITTER_URL = "https://www.koreabaseball.com/Record/Team/Hitter/Basic1.
 const KBO_PITCHER_URL = "https://www.koreabaseball.com/Record/Team/Pitcher/Basic1.aspx";
 const KBO_PLAYER_HITTER_ADVANCED_URL = "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic2.aspx";
 const KBO_PLAYER_PITCHER_BASIC_URL = "https://www.koreabaseball.com/Record/Player/PitcherBasic/Basic1.aspx";
+const KBO_SEARCH_PLAYER_URL = "https://www.koreabaseball.com/ws/Controls.asmx/GetSearchPlayer";
 const KBO_GAME_DATE_URL = "https://www.koreabaseball.com/ws/Main.asmx/GetKboGameDate";
 const KBO_GAME_LIST_URL = "https://www.koreabaseball.com/ws/Main.asmx/GetKboGameList";
 const KBO_PITCHER_RECORD_ANALYSIS_URL = "https://www.koreabaseball.com/ws/Schedule.asmx/GetPitcherRecordAnalysis";
@@ -57,6 +58,21 @@ const KBO_LINEUP_CACHE = new Map();
 const KBO_PLAYER_HITTER_ADVANCED_CACHE = new Map();
 const KBO_PLAYER_PITCHER_BASIC_CACHE = new Map();
 const KBO_PITCHER_DETAIL_CACHE = new Map();
+const KBO_HITTER_DETAIL_CACHE = new Map();
+const KBO_SEARCH_PLAYER_CACHE = new Map();
+
+const KBO_TEAM_NAME_TO_ID = {
+  KT: "KT",
+  SSG: "SK",
+  NC: "NC",
+  삼성: "SS",
+  한화: "HH",
+  LG: "LG",
+  키움: "WO",
+  두산: "OB",
+  롯데: "LT",
+  KIA: "HT",
+};
 
 const STARTER_ERA_MIN = 2;
 const STARTER_ERA_MAX = 7.5;
@@ -708,16 +724,57 @@ function parsePitcherRunsAllowed(html) {
 }
 
 function normalizePlayerNameKey(name) {
-  return String(name || "").replace(/\s+/g, "").trim();
+  return String(name || "")
+    .normalize("NFKC")
+    .replace(/\s+/g, "")
+    .replace(/[·ㆍ.·'`\-]/g, "")
+    .replace(/[^0-9A-Za-z가-힣]/g, "")
+    .trim();
+}
+
+function normalizeTeamNameKey(team) {
+  return String(team || "")
+    .normalize("NFKC")
+    .replace(/\s+/g, "")
+    .trim();
+}
+
+function resolveKboTeamId(teamName) {
+  const normalized = normalizeTeamNameKey(teamName);
+  if (!normalized) {
+    return null;
+  }
+  return KBO_TEAM_NAME_TO_ID[normalized] || null;
 }
 
 function buildTeamPlayerKey(team, name) {
-  const normalizedTeam = String(team || "").trim();
+  const normalizedTeam = normalizeTeamNameKey(team);
   const normalizedName = normalizePlayerNameKey(name);
   if (!normalizedTeam || !normalizedName) {
     return "";
   }
   return `${normalizedTeam}:${normalizedName}`;
+}
+
+function buildHitterAdvancedSourceUrls() {
+  const sorts = [
+    "OPS_RT",
+    "HIT_CN",
+    "HR_CN",
+    "RBI_CN",
+    "BB_CN",
+    "PA_CN",
+    "SB_CN",
+    "GPA_RT",
+    "ISOP_RT",
+  ];
+
+  const urls = [KBO_PLAYER_HITTER_ADVANCED_URL];
+  for (const sortKey of sorts) {
+    urls.push(`${KBO_PLAYER_HITTER_ADVANCED_URL}?sort=${encodeURIComponent(sortKey)}`);
+  }
+
+  return [...new Set(urls)];
 }
 
 function parseKboPlayerHitterAdvanced(html) {
@@ -775,8 +832,31 @@ async function loadKboPlayerHitterAdvancedMap() {
   }
 
   try {
-    const html = await fetchHtml(KBO_PLAYER_HITTER_ADVANCED_URL);
-    const value = parseKboPlayerHitterAdvanced(html);
+    const urls = buildHitterAdvancedSourceUrls();
+    const fetched = await Promise.allSettled(urls.map((url) => fetchHtml(url)));
+    const value = new Map();
+
+    for (const item of fetched) {
+      if (item.status !== "fulfilled") {
+        continue;
+      }
+
+      const partial = parseKboPlayerHitterAdvanced(item.value);
+      for (const [key, nextMetrics] of partial.entries()) {
+        const prevMetrics = value.get(key);
+        if (!prevMetrics) {
+          value.set(key, nextMetrics);
+          continue;
+        }
+
+        const prevOps = toFiniteNumber(prevMetrics.ops);
+        const nextOps = toFiniteNumber(nextMetrics.ops);
+        if (!Number.isFinite(prevOps) && Number.isFinite(nextOps)) {
+          value.set(key, nextMetrics);
+        }
+      }
+    }
+
     KBO_PLAYER_HITTER_ADVANCED_CACHE.set(cacheKey, {
       fetchedAt: Date.now(),
       value,
@@ -785,6 +865,154 @@ async function loadKboPlayerHitterAdvancedMap() {
   } catch {
     return new Map();
   }
+}
+
+async function lookupLineupHitterMetrics(metricsByPlayer, team, playerName) {
+  const lookupKey = buildTeamPlayerKey(team, playerName);
+  if (lookupKey && metricsByPlayer.has(lookupKey)) {
+    return metricsByPlayer.get(lookupKey);
+  }
+
+  const normalizedName = normalizePlayerNameKey(playerName);
+  if (!normalizedName) {
+    return null;
+  }
+
+  let candidate = null;
+  let candidateCount = 0;
+  for (const [key, metrics] of metricsByPlayer.entries()) {
+    if (!key.endsWith(`:${normalizedName}`)) {
+      continue;
+    }
+    candidate = metrics;
+    candidateCount += 1;
+    if (candidateCount > 1) {
+      return null;
+    }
+  }
+
+  if (candidate) {
+    return candidate;
+  }
+
+  return resolveHitterMetricsByPlayerSearch(team, playerName);
+}
+
+async function searchKboPlayersByName(name) {
+  const normalizedName = normalizePlayerNameKey(name);
+  if (!normalizedName) {
+    return [];
+  }
+
+  const cached = KBO_SEARCH_PLAYER_CACHE.get(normalizedName);
+  if (cached && (Date.now() - cached.fetchedAt) < CACHE_TTL_MS) {
+    return cached.value;
+  }
+
+  try {
+    const payload = await fetchKboJson(KBO_SEARCH_PLAYER_URL, { name: normalizedName });
+    const nowPlayers = Array.isArray(payload?.now) ? payload.now : [];
+    KBO_SEARCH_PLAYER_CACHE.set(normalizedName, {
+      fetchedAt: Date.now(),
+      value: nowPlayers,
+    });
+    return nowPlayers;
+  } catch {
+    return [];
+  }
+}
+
+function parseKboHitterDetailProfile(html, playerId) {
+  const $ = cheerio.load(html);
+  const tables = $("table").toArray();
+
+  const readTable = (predicate) => {
+    const table = tables.find((tableNode) => {
+      const headers = $(tableNode).find("thead th").toArray().map((th) => $(th).text().trim());
+      return predicate(headers);
+    });
+
+    if (!table) {
+      return null;
+    }
+
+    const headers = $(table).find("thead th").toArray().map((th) => $(th).text().trim());
+    const firstRow = $(table).find("tbody tr").first();
+    const values = firstRow.find("td").toArray().map((td) => $(td).text().trim());
+    if (values.length === 0 || /^기록이 없습니다/.test(values[0])) {
+      return null;
+    }
+
+    const map = new Map();
+    headers.forEach((header, index) => {
+      map.set(header, values[index] || "");
+    });
+    return map;
+  };
+
+  const seasonA = readTable((headers) => headers.includes("팀명") && headers.includes("AVG") && headers.includes("PA") && headers.includes("AB"));
+  const seasonB = readTable((headers) => headers.includes("BB") && headers.includes("SLG") && headers.includes("OBP") && headers.includes("OPS"));
+
+  if (!seasonA || !seasonB) {
+    return null;
+  }
+
+  return {
+    playerId: String(playerId),
+    team: String(seasonA.get("팀명") || "").trim(),
+    ops: toFiniteNumber(seasonB.get("OPS")),
+    obp: toFiniteNumber(seasonB.get("OBP")),
+    slg: toFiniteNumber(seasonB.get("SLG")),
+    bb: toFiniteNumber(seasonB.get("BB")),
+    hbp: toFiniteNumber(seasonB.get("HBP")),
+  };
+}
+
+async function loadKboHitterDetailById(playerId) {
+  const normalizedId = String(playerId || "").trim();
+  if (!normalizedId) {
+    return null;
+  }
+
+  const cached = KBO_HITTER_DETAIL_CACHE.get(normalizedId);
+  if (cached && (Date.now() - cached.fetchedAt) < CACHE_TTL_MS) {
+    return cached.value;
+  }
+
+  try {
+    const detailUrl = `https://www.koreabaseball.com/Record/Player/HitterDetail/Basic.aspx?playerId=${encodeURIComponent(normalizedId)}`;
+    const html = await fetchHtml(detailUrl);
+    const value = parseKboHitterDetailProfile(html, normalizedId);
+    KBO_HITTER_DETAIL_CACHE.set(normalizedId, {
+      fetchedAt: Date.now(),
+      value,
+    });
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveHitterMetricsByPlayerSearch(teamName, playerName) {
+  const teamId = resolveKboTeamId(teamName);
+  const candidates = await searchKboPlayersByName(playerName);
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return null;
+  }
+
+  const normalizedName = normalizePlayerNameKey(playerName);
+  const filteredByName = candidates.filter((player) => normalizePlayerNameKey(player?.P_NM) === normalizedName);
+  const filteredByTeam = teamId
+    ? filteredByName.filter((player) => String(player?.T_ID || "").trim() === teamId)
+    : filteredByName;
+  const selected = filteredByTeam[0] || filteredByName[0] || candidates[0];
+
+  const playerId = selected?.P_ID;
+  if (!playerId) {
+    return null;
+  }
+
+  return loadKboHitterDetailById(playerId);
 }
 
 function parseKboPlayerPitcherBasic(html) {
@@ -1039,14 +1267,14 @@ async function attachStarterPitcherProfiles(prediction, pitcherMap) {
   };
 }
 
-function attachLineupHitterMetrics(lineup, teamName, metricsByPlayer) {
+async function attachLineupHitterMetrics(lineup, teamName, metricsByPlayer) {
   const players = Array.isArray(lineup) ? lineup : [];
   const team = String(teamName || "").trim();
   let matchedCount = 0;
 
-  const enrichedLineup = players.map((player) => {
-    const lookupKey = buildTeamPlayerKey(team, player?.name);
-    const metrics = lookupKey ? metricsByPlayer.get(lookupKey) : null;
+  const enrichedLineup = await Promise.all(players.map(async (player) => {
+    const playerName = player?.name || player?.playerName || "";
+    const metrics = await lookupLineupHitterMetrics(metricsByPlayer, team, playerName);
 
     if (!metrics) {
       return player;
@@ -1061,9 +1289,9 @@ function attachLineupHitterMetrics(lineup, teamName, metricsByPlayer) {
       slg: toFiniteNumber(metrics.slg),
       bb: toFiniteNumber(metrics.bb),
       hbp: toFiniteNumber(metrics.hbp),
-      playerId: metrics.playerId || null,
+      playerId: metrics.playerId || player?.playerId || null,
     };
-  });
+  }));
 
   return {
     lineup: enrichedLineup,
@@ -1427,12 +1655,12 @@ async function buildKboPredictionsForDate({
   const playerHitterAdvancedMap = await loadKboPlayerHitterAdvancedMap();
   const playerPitcherBasicMap = await loadKboPlayerPitcherBasicMap();
   const withLineupHitterMetrics = await Promise.all(withLineups.map(async (prediction) => {
-    const awayMetrics = attachLineupHitterMetrics(
+    const awayMetrics = await attachLineupHitterMetrics(
       prediction.awayLineup,
       prediction.awayTeam,
       playerHitterAdvancedMap,
     );
-    const homeMetrics = attachLineupHitterMetrics(
+    const homeMetrics = await attachLineupHitterMetrics(
       prediction.homeLineup,
       prediction.homeTeam,
       playerHitterAdvancedMap,
