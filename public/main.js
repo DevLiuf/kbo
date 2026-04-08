@@ -216,8 +216,10 @@ function renderKboLineupBlock(game) {
   let helperText = "경기 시작 전에는 라인업이 비어 있을 수 있습니다.";
 
   if (hasLineup) {
-    readinessText = game.lineupConfirmed ? "라인업 확정" : "라인업 수집 완료";
-    helperText = "";
+    readinessText = game.lineupConfirmed ? "라인업 확정" : "라인업 미확정";
+    helperText = game.lineupConfirmed
+      ? ""
+      : "공식 라인업 확정 전 임시 수집 데이터일 수 있습니다.";
   } else if (game.lineupDataReady) {
     readinessText = "라인업 미발표";
     helperText = "현재 제공된 타순 데이터가 없습니다.";
