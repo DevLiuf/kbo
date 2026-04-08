@@ -1,0 +1,42 @@
+{
+  "version": "trained-logistic-kbo-2026-04-08",
+  "trainedAt": "2026-04-08T04:30:51.429Z",
+  "samples": 35,
+  "trainSamples": 20,
+  "validSamples": 15,
+  "trainingFromGameDate": "20260331",
+  "trainingToGameDate": "20260407",
+  "holdoutDays": 3,
+  "intercept": -0.778195,
+  "offenseDiff": 0.400197,
+  "defenseDiff": 1.066124,
+  "starterEraDiff": -1.171239,
+  "runCreationResidualDiff": 0.430159,
+  "powerContactMixDiff": 0.157846,
+  "starterHitsPer9Diff": 0.212194,
+  "starterHrPer9Diff": 0.068258,
+  "starterFreePassPer9Diff": 1.047396,
+  "starterSoPer9Diff": 0.241203,
+  "starterRunsPer9Diff": 1.589215,
+  "whipDiff": 0.315473,
+  "bullpenDiff": 0.511603,
+  "homeAdvantage": 1.354225,
+  "lineupSignal": -0.484136,
+  "preLineupShrink": 0.75,
+  "blendWeightPost": 0.65,
+  "blendWeightPre": 0.45,
+  "plattA": 0.610408,
+  "plattB": 0.040035,
+  "metrics": {
+    "train": {
+      "logLoss": 0.07078869216274683,
+      "brier": 0.010128647003446812,
+      "accuracy": 1
+    },
+    "validation": {
+      "logLoss": 0.28287009627047544,
+      "brier": 0.10152434381057178,
+      "accuracy": 0.8
+    }
+  }
+}

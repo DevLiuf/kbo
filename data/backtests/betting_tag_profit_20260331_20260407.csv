@@ -1,0 +1,41 @@
+gameDate,gameTime,awayTeam,homeTeam,bettingTag,bettingReason,predictedWinner,actualWinner,winnerHit,homeWinProbability,awayWinProbability,winProbGap,edgeBand,totalBand,expectedTotalRuns,saberApplied,stakeUnits,odds,betPlaced,payoutUnits,profitUnits
+20260331,18:30,KIA,LG,추천,강한 승률 엣지 + 저득점 리스크 낮음,KIA,KIA,true,0.053,0.947,0.895,strong_edge,high_total,7.864,true,1,1.9,true,1.9,0.9
+20260331,18:30,KT,한화,추천,강한 승률 엣지 + 저득점 리스크 낮음,KT,KT,true,0.069,0.931,0.863,strong_edge,high_total,13.645,true,1,1.9,true,1.9,0.9
+20260331,18:30,롯데,NC,추천,강한 승률 엣지 + 저득점 리스크 낮음,NC,NC,true,0.826,0.174,0.651,strong_edge,high_total,8.613,true,1,1.9,true,1.9,0.9
+20260331,18:30,키움,SSG,추천,강한 승률 엣지 + 저득점 리스크 낮음,SSG,SSG,true,0.722,0.278,0.444,strong_edge,high_total,11.668,true,1,1.9,true,1.9,0.9
+20260331,18:30,두산,삼성,추천,강한 승률 엣지 + 저득점 리스크 낮음,두산,,false,0.342,0.658,0.315,strong_edge,high_total,8.828,true,1,1.9,true,0,-1
+20260401,18:30,키움,SSG,추천,강한 승률 엣지 + 저득점 리스크 낮음,키움,키움,true,0.088,0.912,0.825,strong_edge,high_total,11.635,true,1,1.9,true,1.9,0.9
+20260401,18:30,두산,삼성,추천,강한 승률 엣지 + 저득점 리스크 낮음,삼성,삼성,true,0.818,0.182,0.635,strong_edge,high_total,9.065,true,1,1.9,true,1.9,0.9
+20260401,18:30,KT,한화,추천,강한 승률 엣지 + 저득점 리스크 낮음,KT,KT,true,0.207,0.793,0.586,strong_edge,high_total,13.598,true,1,1.9,true,1.9,0.9
+20260401,18:30,롯데,NC,추천,강한 승률 엣지 + 저득점 리스크 낮음,NC,NC,true,0.792,0.208,0.584,strong_edge,high_total,8.671,true,1,1.9,true,1.9,0.9
+20260401,18:30,KIA,LG,추천,강한 승률 엣지 + 저득점 리스크 낮음,LG,LG,true,0.787,0.213,0.574,strong_edge,high_total,7.54,true,1,1.9,true,1.9,0.9
+20260402,18:30,KT,한화,추천,강한 승률 엣지 + 저득점 리스크 낮음,KT,KT,true,0.05,0.95,0.9,strong_edge,high_total,13.969,true,1,1.9,true,1.9,0.9
+20260402,18:30,키움,SSG,추천,강한 승률 엣지 + 저득점 리스크 낮음,SSG,SSG,true,0.947,0.053,0.895,strong_edge,high_total,11.76,true,1,1.9,true,1.9,0.9
+20260402,18:30,롯데,NC,추천,강한 승률 엣지 + 저득점 리스크 낮음,NC,NC,true,0.927,0.073,0.854,strong_edge,high_total,8.772,true,1,1.9,true,1.9,0.9
+20260402,18:30,두산,삼성,추천,강한 승률 엣지 + 저득점 리스크 낮음,삼성,삼성,true,0.673,0.327,0.346,strong_edge,high_total,8.835,true,1,1.9,true,1.9,0.9
+20260402,18:30,KIA,LG,추천,강한 승률 엣지 + 저득점 리스크 낮음,LG,LG,true,0.657,0.343,0.314,strong_edge,high_total,7.774,true,1,1.9,true,1.9,0.9
+20260403,18:30,SSG,롯데,추천,강한 승률 엣지 + 저득점 리스크 낮음,SSG,SSG,true,0.05,0.95,0.9,strong_edge,high_total,12.075,true,1,1.9,true,1.9,0.9
+20260403,18:30,NC,KIA,추천,강한 승률 엣지 + 저득점 리스크 낮음,NC,NC,true,0.05,0.95,0.9,strong_edge,mid_total,7.14,true,1,1.9,true,1.9,0.9
+20260403,18:30,LG,키움,추천,강한 승률 엣지 + 저득점 리스크 낮음,키움,키움,true,0.95,0.05,0.9,strong_edge,high_total,9.233,true,1,1.9,true,1.9,0.9
+20260403,18:30,한화,두산,추천,강한 승률 엣지 + 저득점 리스크 낮음,한화,한화,true,0.172,0.828,0.656,strong_edge,high_total,13.048,true,1,1.9,true,1.9,0.9
+20260403,18:30,삼성,KT,추천,강한 승률 엣지 + 저득점 리스크 낮음,삼성,삼성,true,0.291,0.709,0.417,strong_edge,high_total,10.904,true,1,1.9,true,1.9,0.9
+20260404,14:00,한화,두산,추천,강한 승률 엣지 + 저득점 리스크 낮음,한화,한화,true,0.05,0.95,0.9,strong_edge,high_total,12.706,true,1,1.9,true,1.9,0.9
+20260404,17:00,NC,KIA,추천,강한 승률 엣지 + 저득점 리스크 낮음,NC,NC,true,0.05,0.95,0.9,strong_edge,high_total,7.613,true,1,1.9,true,1.9,0.9
+20260404,17:00,SSG,롯데,추천,강한 승률 엣지 + 저득점 리스크 낮음,SSG,SSG,true,0.093,0.907,0.814,strong_edge,high_total,12.115,true,1,1.9,true,1.9,0.9
+20260404,17:00,삼성,KT,추천,강한 승률 엣지 + 저득점 리스크 낮음,삼성,삼성,true,0.155,0.845,0.69,strong_edge,high_total,11.462,true,1,1.9,true,1.9,0.9
+20260404,17:00,LG,키움,추천,강한 승률 엣지 + 저득점 리스크 낮음,LG,LG,true,0.312,0.688,0.375,strong_edge,high_total,9.117,true,1,1.9,true,1.9,0.9
+20260405,14:00,SSG,롯데,추천,강한 승률 엣지 + 저득점 리스크 낮음,SSG,SSG,true,0.059,0.941,0.882,strong_edge,high_total,11.55,true,1,1.9,true,1.9,0.9
+20260405,14:00,삼성,KT,추천,강한 승률 엣지 + 저득점 리스크 낮음,KT,KT,true,0.852,0.148,0.704,strong_edge,high_total,10.919,true,1,1.9,true,1.9,0.9
+20260405,14:00,NC,KIA,추천,강한 승률 엣지 + 저득점 리스크 낮음,NC,KIA,false,0.215,0.785,0.569,strong_edge,high_total,7.243,true,1,1.9,true,0,-1
+20260405,14:00,한화,두산,추천,강한 승률 엣지 + 저득점 리스크 낮음,한화,두산,false,0.22,0.78,0.561,strong_edge,high_total,12.44,true,1,1.9,true,0,-1
+20260405,14:00,LG,키움,회피,승률 격차가 작아 방향성 불명확,LG,LG,true,0.472,0.528,0.056,coinflip,high_total,9.396,true,0,1.9,false,0,0
+20260407,18:30,한화,SSG,추천,강한 승률 엣지 + 저득점 리스크 낮음,한화,한화,true,0.056,0.944,0.888,strong_edge,high_total,13.957,true,1,1.9,true,1.9,0.9
+20260407,18:30,KT,롯데,추천,강한 승률 엣지 + 저득점 리스크 낮음,KT,KT,true,0.064,0.936,0.871,strong_edge,high_total,11.386,true,1,1.9,true,1.9,0.9
+20260407,18:30,키움,두산,추천,강한 승률 엣지 + 저득점 리스크 낮음,키움,키움,true,0.067,0.933,0.866,strong_edge,high_total,10.185,true,1,1.9,true,1.9,0.9
+20260407,18:30,삼성,KIA,추천,강한 승률 엣지 + 저득점 리스크 낮음,삼성,삼성,true,0.115,0.885,0.77,strong_edge,high_total,8.079,true,1,1.9,true,1.9,0.9
+20260407,18:30,LG,NC,회피,승률 격차가 작아 방향성 불명확,NC,LG,false,0.517,0.483,0.035,coinflip,high_total,7.478,true,0,1.9,false,0,0
+20260407,18:30,한화,SSG,추천,강한 승률 엣지 + 저득점 리스크 낮음,한화,한화,true,0.056,0.944,0.888,strong_edge,high_total,13.957,true,1,1.9,true,1.9,0.9
+20260407,18:30,KT,롯데,추천,강한 승률 엣지 + 저득점 리스크 낮음,KT,KT,true,0.064,0.936,0.871,strong_edge,high_total,11.386,true,1,1.9,true,1.9,0.9
+20260407,18:30,키움,두산,추천,강한 승률 엣지 + 저득점 리스크 낮음,키움,키움,true,0.067,0.933,0.866,strong_edge,high_total,10.185,true,1,1.9,true,1.9,0.9
+20260407,18:30,삼성,KIA,추천,강한 승률 엣지 + 저득점 리스크 낮음,삼성,삼성,true,0.115,0.885,0.77,strong_edge,high_total,8.079,true,1,1.9,true,1.9,0.9
+20260407,18:30,LG,NC,회피,승률 격차가 작아 방향성 불명확,NC,LG,false,0.517,0.483,0.035,coinflip,high_total,7.478,true,0,1.9,false,0,0

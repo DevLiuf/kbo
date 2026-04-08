@@ -1,0 +1,94 @@
+{
+  "range": {
+    "from": "20260331",
+    "to": "20260407"
+  },
+  "assumptions": {
+    "oddsByTag": {
+      "추천": 1.9,
+      "주의": 1.9,
+      "회피": 1.9
+    },
+    "stakeByTag": {
+      "추천": 1,
+      "주의": 0.5,
+      "회피": 0
+    },
+    "note": "Decimal odds model. profit = payout - stake, ROI = totalProfit / totalStake"
+  },
+  "games": 40,
+  "overall": {
+    "games": 40,
+    "bets": 37,
+    "wins": 34,
+    "losses": 3,
+    "hitRate": 0.9189,
+    "totalStakeUnits": 37,
+    "totalPayoutUnits": 64.6,
+    "totalProfitUnits": 27.6,
+    "roi": 0.7459,
+    "avgStakePerBet": 1,
+    "avgWinProbGap": 0.6691,
+    "avgExpectedTotalRuns": 10.2842
+  },
+  "byTag": {
+    "추천": {
+      "games": 37,
+      "bets": 37,
+      "wins": 34,
+      "losses": 3,
+      "hitRate": 0.9189,
+      "totalStakeUnits": 37,
+      "totalPayoutUnits": 64.6,
+      "totalProfitUnits": 27.6,
+      "roi": 0.7459,
+      "avgStakePerBet": 1,
+      "avgWinProbGap": 0.72,
+      "avgExpectedTotalRuns": 10.4599
+    },
+    "회피": {
+      "games": 3,
+      "bets": 0,
+      "wins": 0,
+      "losses": 0,
+      "hitRate": null,
+      "totalStakeUnits": 0,
+      "totalPayoutUnits": 0,
+      "totalProfitUnits": 0,
+      "roi": null,
+      "avgStakePerBet": null,
+      "avgWinProbGap": 0.042,
+      "avgExpectedTotalRuns": 8.1173
+    }
+  },
+  "strategies": {
+    "recommendAndCaution": {
+      "games": 37,
+      "bets": 37,
+      "wins": 34,
+      "losses": 3,
+      "hitRate": 0.9189,
+      "totalStakeUnits": 37,
+      "totalPayoutUnits": 64.6,
+      "totalProfitUnits": 27.6,
+      "roi": 0.7459,
+      "avgStakePerBet": 1,
+      "avgWinProbGap": 0.72,
+      "avgExpectedTotalRuns": 10.4599
+    },
+    "recommendOnly": {
+      "games": 40,
+      "bets": 37,
+      "wins": 34,
+      "losses": 3,
+      "hitRate": 0.9189,
+      "totalStakeUnits": 37,
+      "totalPayoutUnits": 64.6,
+      "totalProfitUnits": 27.6,
+      "roi": 0.7459,
+      "avgStakePerBet": 1,
+      "avgWinProbGap": 0.6691,
+      "avgExpectedTotalRuns": 10.2842
+    }
+  }
+}

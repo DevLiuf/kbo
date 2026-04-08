@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "startedAt": "2026-04-04T15:56:09.331Z",
+  "finishedAt": "2026-04-04T15:56:10.689Z",
+  "from": "20260320",
+  "to": "20260405",
+  "holdoutDays": 3,
+  "retryCount": 1,
+  "retryDelayMs": 1000,
+  "minExamples": 30,
+  "message": "daily retrain completed"
+}

@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "league": "kbo",
+  "startedAt": "2026-04-08T04:30:50.682Z",
+  "finishedAt": "2026-04-08T04:30:51.540Z",
+  "from": "20260331",
+  "to": "20260408",
+  "holdoutDays": 3,
+  "retryCount": 3,
+  "retryDelayMs": 7000,
+  "minExamples": 30,
+  "message": "daily retrain completed"
+}

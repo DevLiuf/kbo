@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KBO 피타고리안 승률 계산기</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <h1>KBO PREDICTOR</h1>
+        <p>2026 시즌 · Log5 + 피타고리안 + 홈 가중치</p>
+      </header>
+
+      <section class="meta">
+        <p id="statusText">데이터를 불러오는 중...</p>
+        <div id="modelStatusRow" class="model-status-row" aria-live="polite"></div>
+        <div class="meta-actions">
+          <button id="refreshButton">최신 데이터 새로고침</button>
+        </div>
+      </section>
+
+      <section class="daily-predictions">
+        <div class="daily-header">
+          <h2>게임센터 자동 예측</h2>
+          <p id="dailyDateText">-</p>
+        </div>
+        <div id="dailyPredictionsList" class="daily-list">
+          <p class="daily-empty">경기 예측을 불러오는 중...</p>
+        </div>
+      </section>
+
+      <section class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>순위</th>
+              <th>팀</th>
+              <th>경기</th>
+              <th>득점</th>
+              <th>실점</th>
+              <th>피타고리안</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </section>
+
+      <section class="table-wrap metrics-wrap">
+        <h3 class="table-subtitle">팀 지표 상세</h3>
+        <table id="metricsTable">
+          <thead>
+            <tr>
+              <th class="metric-help" data-sort-field="team" title="팀명">팀</th>
+              <th class="metric-help" data-sort-field="games" title="현재까지 치른 경기 수">경기</th>
+              <th class="metric-help" data-sort-field="offenseRpg" title="경기당 평균 득점 (높을수록 공격력 우세)">득점R/G</th>
+              <th class="metric-help" data-sort-field="defenseRpg" title="경기당 평균 실점 (낮을수록 수비력 우세)">실점R/G</th>
+              <th class="metric-help" data-sort-field="battingAvg" title="팀 타율 (높을수록 우세)">AVG</th>
+              <th class="metric-help" data-sort-field="hrPerGame" title="경기당 팀 홈런 (높을수록 장타력 우세)">HR/G</th>
+              <th class="metric-help" data-sort-field="teamEra" title="팀 평균자책점 ERA (낮을수록 우세)">팀ERA</th>
+              <th class="metric-help" data-sort-field="teamWhip" title="팀 WHIP (이닝당 출루 허용, 낮을수록 우세)">WHIP</th>
+              <th class="metric-help" data-sort-field="bullpenUsagePerGame" title="경기당 불펜 기여도 (SV+HLD/G, 높을수록 불펜 성과 우세)">불펜(SV+HLD/G)</th>
+              <th class="metric-help" data-sort-field="kbbRatio" title="불펜 K/BB 비율 (높을수록 제구/탈삼진 우세)">K/BB</th>
+            </tr>
+          </thead>
+          <tbody id="metricsTableBody"></tbody>
+        </table>
+      </section>
+    </main>
+
+    <script src="/main.js"></script>
+  </body>
+</html>

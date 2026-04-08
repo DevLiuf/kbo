@@ -1,0 +1,35 @@
+{
+  "version": "trained-logistic-2026-04-04",
+  "trainedAt": "2026-04-04T15:56:10.603Z",
+  "samples": 60,
+  "trainSamples": 45,
+  "validSamples": 15,
+  "holdoutDays": 3,
+  "intercept": -0.317499,
+  "offenseDiff": 0.165282,
+  "defenseDiff": -0.17644,
+  "starterEraDiff": -0.153606,
+  "battingAvgDiff": 0.77285,
+  "hrPerGameDiff": 0.505779,
+  "whipDiff": 0.068436,
+  "bullpenDiff": 0.637908,
+  "homeAdvantage": 1.368046,
+  "lineupSignal": -0.023439,
+  "preLineupShrink": 0.75,
+  "blendWeightPost": 0.65,
+  "blendWeightPre": 0.45,
+  "plattA": 1.361301,
+  "plattB": -0.463413,
+  "metrics": {
+    "train": {
+      "logLoss": 0.5812642462278379,
+      "brier": 0.20355109869036797,
+      "accuracy": 0.6888888888888889
+    },
+    "validation": {
+      "logLoss": 0.41621251123372266,
+      "brier": 0.14272376481743596,
+      "accuracy": 0.7333333333333333
+    }
+  }
+}

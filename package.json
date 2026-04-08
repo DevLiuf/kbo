@@ -1,0 +1,26 @@
+{
+  "name": "kbo",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test",
+    "ml:fetch-results": "node scripts/fetch-results.js",
+    "ml:build-examples": "node scripts/build-training-examples.js",
+    "ml:train": "node scripts/train-logistic.js",
+    "ml:eval": "node scripts/eval-logistic.js",
+    "ml:retrain-daily": "node scripts/retrain-daily.js",
+    "ml:retrain-kbo": "node scripts/retrain-daily.js",
+    "ml:backfill-snapshots": "node scripts/backfill-snapshots.js",
+    "ml:export-backtest": "node scripts/export-saber-backtest-details.js",
+    "ml:export-betting-profit": "node scripts/export-betting-tag-profitability.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "express": "^5.2.1"
+  }
+}

@@ -1,0 +1,69 @@
+{
+  "range": {
+    "from": "20260331",
+    "to": "20260406"
+  },
+  "games": 35,
+  "overall": {
+    "winnerAccuracy": 0.7714285714285715,
+    "predictedScoreMae": 2.6857142857142855,
+    "saberExpectedMae": 2.915714285714286,
+    "markovMae": 2.430357142857143,
+    "monteCarloMae": 2.446728571428572,
+    "saberAppliedRate": 0.8571428571428571
+  },
+  "byTotalBand": {
+    "mid_total": {
+      "games": 6,
+      "winnerAccuracy": 0.8333333333333334,
+      "predictedScoreMae": 1.6666666666666667,
+      "saberExpectedMae": 1.8083333333333336,
+      "markovMae": 2.510083333333333,
+      "monteCarloMae": 2.535833333333333,
+      "over85HitRate": 0.8333333333333334,
+      "over85ProbAvg": 0.297
+    },
+    "high_total": {
+      "games": 15,
+      "winnerAccuracy": 0.9333333333333333,
+      "predictedScoreMae": 2.5,
+      "saberExpectedMae": 2.873333333333334,
+      "markovMae": 3.3821333333333334,
+      "monteCarloMae": 3.3846333333333334,
+      "over85HitRate": 1,
+      "over85ProbAvg": 0.5558666666666667
+    },
+    "low_total": {
+      "games": 14,
+      "winnerAccuracy": 0.5714285714285714,
+      "predictedScoreMae": 3.3214285714285716,
+      "saberExpectedMae": 3.4357142857142855,
+      "markovMae": 1.3764285714285716,
+      "monteCarloMae": 1.4036428571428572,
+      "over85HitRate": 0,
+      "over85ProbAvg": 0.24014285714285716
+    }
+  },
+  "byEdgeBand": {
+    "strong_edge": {
+      "games": 33,
+      "winnerAccuracy": 0.7878787878787878,
+      "predictedScoreMae": 2.712121212121212,
+      "saberExpectedMae": 2.9515151515151516,
+      "markovMae": 2.3402575757575756,
+      "monteCarloMae": 2.359787878787879,
+      "over85HitRate": 0.5757575757575758,
+      "over85ProbAvg": 0.3833939393939394
+    },
+    "coinflip": {
+      "games": 2,
+      "winnerAccuracy": 0.5,
+      "predictedScoreMae": 2.25,
+      "saberExpectedMae": 2.325,
+      "markovMae": 3.917,
+      "monteCarloMae": 3.88125,
+      "over85HitRate": 0.5,
+      "over85ProbAvg": 0.41500000000000004
+    }
+  }
+}
