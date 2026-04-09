@@ -131,6 +131,10 @@ npm run ml:retrain-daily -- --from=20260331 --to=20260405 --holdoutDays=3 --retr
 Windows에서는 `quick-train-tune.bat`를 더블클릭하면 바로 실행됩니다.
 - 기본값: `--from=20260331 --baseUrl=https://kbo-predictor.vercel.app`
 - 커스텀 실행 예시(CMD): `quick-train-tune.bat --from=20260331 --to=20260409 --baseUrl=https://kbo-predictor.vercel.app`
+- 필수: Node.js LTS(권장 v18+) 설치 후 `node -v`가 동작해야 합니다.
+- 최신 BAT는 `node` PATH가 없어도 기본 설치 경로(`C:\Program Files\nodejs\node.exe`)를 자동 탐색합니다.
+- 기본 BAT 실행은 `--autoPush=true`로 동작합니다(학습/튜닝 성공 후 `git add/commit/push` 자동 시도).
+- 단, 현재 폴더가 Git 저장소가 아니면 자동 푸시는 건너뜁니다(`autoPush: skipped`, reason 표시).
 
 ```bash
 npm run ml:helper-pc -- --from=20260331 --to=20260408 --baseUrl=https://kbo-predictor.vercel.app

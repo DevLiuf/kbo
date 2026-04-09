@@ -11,26 +11,6 @@ function formatDateYYYYMMDD(date) {
   return `${y}${m}${d}`;
 }
 
-function getSeoulTodayYYYYMMDD() {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-
-  const parts = formatter.formatToParts(new Date());
-  const year = parts.find((part) => part.type === "year")?.value;
-  const month = parts.find((part) => part.type === "month")?.value;
-  const day = parts.find((part) => part.type === "day")?.value;
-
-  if (!year || !month || !day) {
-    return formatDateYYYYMMDD(new Date());
-  }
-
-  return `${year}${month}${day}`;
-}
-
 function runNodeScript(scriptFile, scriptArgs = []) {
   const result = spawnSync(process.execPath, [scriptFile, ...scriptArgs], {
     stdio: "inherit",
@@ -115,7 +95,7 @@ async function readJson(filePath) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const from = String(args.from || "20260331").trim();
-  const to = String(args.to || getSeoulTodayYYYYMMDD()).trim();
+  const to = String(args.to || formatDateYYYYMMDD(new Date())).trim();
   const baseUrl = String(
     args.baseUrl
       || process.env.PREDICT_BASE_URL
@@ -125,7 +105,7 @@ async function main() {
   const commitMessage = String(args.commitMessage || "Update ML model and saber tuning outputs").trim();
 
   if (!/^\d{8}$/.test(from) || !/^\d{8}$/.test(to)) {
-    throw new Error("Usage: node scripts/helper-pc-train-and-tune.js --from=YYYYMMDD [--to=YYYYMMDD] [--baseUrl=https://kbo-predictor.vercel.app]");
+    throw new Error("Usage: node scripts/helper-pc-train-and-tune.js --from=YYYYMMDD --to=YYYYMMDD [--baseUrl=https://kbo-predictor.vercel.app]");
   }
 
   console.log("[helper-pc] 1/2 ML retrain start");
