@@ -89,7 +89,7 @@ const SABER_BLEND_BASE_WEIGHT = 0.7;
 const SABER_BLEND_MARKOV_WEIGHT = 0.25;
 const SABER_BLEND_MONTE_WEIGHT = 0.05;
 const SABER_CLAMP_THRESHOLD = 2.5;
-const BETTING_RECOMMEND_EDGE_MIN = 0.2;
+const BETTING_RECOMMEND_EDGE_MIN = 0.24;
 const BETTING_AVOID_EDGE_MAX = 0.08;
 const BETTING_RECOMMEND_TOTAL_MIN = 7.2;
 const BETTING_AVOID_TOTAL_MAX = 6.9;
@@ -2746,6 +2746,7 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
 
     const scoreDiff = Math.abs(predictedHomeScore - predictedAwayScore);
     const winProbGap = Math.abs(finalHomeWinProbability - finalAwayWinProbability);
+    const maxSideWinProbability = Math.max(finalHomeWinProbability, finalAwayWinProbability);
     const expectedTotalRuns = expectedAwayRuns + expectedHomeRuns;
     const edgeBand = winProbGap < BETTING_AVOID_EDGE_MAX
       ? "coinflip"
@@ -2773,6 +2774,12 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       } else if (!useSaberHybrid) {
         bettingTag = "주의";
         bettingReason = "라인업 확정은 됐지만 세이버 보정 미적용";
+      } else if (totalBand !== "high_total") {
+        bettingTag = "주의";
+        bettingReason = "강한 엣지지만 득점밴드 불확실로 보수 접근";
+      } else if (maxSideWinProbability >= 0.9) {
+        bettingTag = "주의";
+        bettingReason = "확률 과신 구간(90%+)으로 역배 변동성 주의";
       } else {
         bettingTag = "추천";
         bettingReason = "강한 승률 엣지 + 저득점 리스크 낮음";
@@ -2784,10 +2791,8 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       : null;
     const confidenceLevel = prediction.lineupConfirmed ? "lineup_confirmed" : "pre_lineup";
     const note = prediction.lineupConfirmed
-      ? useSaberHybrid
-        ? "라인업/선발 반영 ML 예측 (Markov+MonteCarlo 득점 보정 포함)"
-        : "라인업/선발 반영 ML 예측"
-      : "라인업 발표 전 ML 예측(변동성 큼)";
+      ? "금일 라인업 기준입니다."
+      : "라인업 발표 전으로 최근 라인업 기준입니다.";
     const featureContributions = buildFeatureContributions(featureValues, model);
 
     return {

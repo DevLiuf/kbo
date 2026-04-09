@@ -660,7 +660,7 @@ function renderDailyPredictions(payload) {
       ${actualResultBlock}
       ${headToHeadBlock}
       <div class="daily-winner">예상 승리팀: <strong>${game.predictedWinner}</strong> <span class="confidence">(${confidence})</span> ${hitBadge}</div>
-      ${isPreLineup ? `<div class="daily-note">${game.predictionNote || "라인업 발표 전 예측입니다."}</div>` : ""}
+      <div class="daily-note">${game.predictionNote || (isPreLineup ? "라인업 발표 전으로 최근 라인업 기준입니다." : "금일 라인업 기준입니다.")}</div>
     `;
     dailyPredictionsList.appendChild(item);
   });

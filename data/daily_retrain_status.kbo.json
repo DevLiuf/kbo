@@ -1,10 +1,10 @@
 {
   "ok": true,
   "league": "kbo",
-  "startedAt": "2026-04-08T04:30:50.682Z",
-  "finishedAt": "2026-04-08T04:30:51.540Z",
+  "startedAt": "2026-04-09T00:27:56.752Z",
+  "finishedAt": "2026-04-09T00:27:57.545Z",
   "from": "20260331",
-  "to": "20260408",
+  "to": "20260409",
   "holdoutDays": 3,
   "retryCount": 3,
   "retryDelayMs": 7000,
