@@ -77,7 +77,13 @@ npm run ml:build-examples
 npm run ml:backfill-snapshots -- --from=20260401 --to=20260405 --includeFinished=true
 ```
 
-주의: 백필은 실행 중인 서버의 `/api/predictions/gameday`를 호출해 `data/prediction_snapshots.ndjson`에 누적합니다.
+전체 스냅샷을 새 피처 기준으로 다시 쌓으려면 초기화 모드를 사용하세요.
+
+```bash
+npm run ml:backfill-snapshots -- --from=20260331 --to=20260409 --includeFinished=true --baseUrl=https://kbo-predictor.vercel.app --resetSnapshots=true
+```
+
+주의: 백필은 `/api/predictions/gameday` 응답을 로컬 `data/prediction_snapshots.ndjson`에 저장합니다. `--resetSnapshots=true`를 주면 기존 파일을 비우고 다시 기록합니다.
 
 현재 서비스는 KBO 전용입니다.
 
