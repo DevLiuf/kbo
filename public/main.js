@@ -15,6 +15,81 @@ const metricsSortState = {
 };
 let metricsRowsCache = [];
 const currentLeague = "kbo";
+let html2CanvasLoaderPromise = null;
+
+function ensureHtml2CanvasLoaded() {
+  if (typeof window.html2canvas === "function") {
+    return Promise.resolve(window.html2canvas);
+  }
+
+  if (html2CanvasLoaderPromise) {
+    return html2CanvasLoaderPromise;
+  }
+
+  html2CanvasLoaderPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js";
+    script.async = true;
+    script.onload = () => {
+      if (typeof window.html2canvas === "function") {
+        resolve(window.html2canvas);
+      } else {
+        reject(new Error("html2canvas load failed"));
+      }
+    };
+    script.onerror = () => {
+      reject(new Error("Failed to load html2canvas"));
+    };
+    document.head.appendChild(script);
+  });
+
+  return html2CanvasLoaderPromise;
+}
+
+function sanitizeFileNamePart(value) {
+  return String(value || "")
+    .trim()
+    .replaceAll(/\s+/g, "-")
+    .replaceAll(/[^0-9A-Za-z가-힣_-]/g, "");
+}
+
+function buildPredictionCardFileName(card) {
+  const date = sanitizeFileNamePart(card?.dataset?.gameDate) || "date";
+  const awayTeam = sanitizeFileNamePart(card?.dataset?.awayTeam) || "away";
+  const homeTeam = sanitizeFileNamePart(card?.dataset?.homeTeam) || "home";
+  const time = sanitizeFileNamePart(card?.dataset?.gameTime) || "time";
+  return `kbo-prediction-${date}-${time}-${awayTeam}-vs-${homeTeam}.png`;
+}
+
+async function downloadPredictionCardImage(cardElement, triggerButton) {
+  if (!cardElement || !triggerButton) {
+    return;
+  }
+
+  const originalLabel = triggerButton.textContent;
+  triggerButton.disabled = true;
+  triggerButton.textContent = "저장중...";
+
+  try {
+    const html2canvas = await ensureHtml2CanvasLoaded();
+    const canvas = await html2canvas(cardElement, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: null,
+      ignoreElements: (element) => element.classList?.contains("capture-exclude"),
+    });
+
+    const link = document.createElement("a");
+    link.download = buildPredictionCardFileName(cardElement);
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+  } catch (error) {
+    alert(`이미지 저장 실패: ${error.message}`);
+  } finally {
+    triggerButton.disabled = false;
+    triggerButton.textContent = originalLabel;
+  }
+}
 
 function resolveApiUrl(exponent, league) {
   const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
@@ -618,6 +693,10 @@ function renderDailyPredictions(payload) {
 
     const item = document.createElement("article");
     item.className = "daily-item";
+    item.dataset.gameDate = String(game.gameDate || payload.date || "");
+    item.dataset.gameTime = String(game.gameTime || "");
+    item.dataset.awayTeam = String(game.awayTeam || "");
+    item.dataset.homeTeam = String(game.homeTeam || "");
     const headToHeadBlock = renderHeadToHeadMetrics(game);
     const kboLineupBlock = renderKboLineupBlock(game);
     item.innerHTML = `
@@ -627,6 +706,7 @@ function renderDailyPredictions(payload) {
         <span class="daily-bet-badge ${bettingTagClass}">${bettingTag}</span>
         <span class="daily-mode ${isPreLineup ? "pre" : "post"}">${isPreLineup ? "PRE" : "POST"}</span>
         <span class="daily-saber-badge ${saberApplied ? "on" : "off"}">${saberApplied ? "세이버 보정 적용" : "세이버 보정 대기"}</span>
+        <button type="button" class="daily-download-btn capture-exclude" aria-label="예측 카드 이미지 저장">카드 저장</button>
       </div>
       <div class="daily-matchup">
         <div class="team-side away-side">
@@ -723,5 +803,14 @@ async function loadData() {
 }
 
 refreshButton.addEventListener("click", loadData);
+dailyPredictionsList.addEventListener("click", (event) => {
+  const downloadButton = event.target.closest(".daily-download-btn");
+  if (!downloadButton) {
+    return;
+  }
+
+  const cardElement = downloadButton.closest(".daily-item");
+  downloadPredictionCardImage(cardElement, downloadButton);
+});
 setupMetricsSortHeaders();
 loadData();
