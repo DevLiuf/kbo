@@ -152,6 +152,18 @@ function getNextYyyymmdd(dateText) {
   return formatDateYYYYMMDD(next);
 }
 
+function isAfterGameDateEnd(dateText, nowDate = new Date()) {
+  if (!/^\d{8}$/.test(String(dateText || ""))) {
+    return false;
+  }
+
+  const year = Number(dateText.slice(0, 4));
+  const month = Number(dateText.slice(4, 6)) - 1;
+  const day = Number(dateText.slice(6, 8));
+  const endOfDay = new Date(year, month, day, 23, 59, 59, 999);
+  return nowDate > endOfDay;
+}
+
 function parseKboDateTime(dateText, timeText) {
   if (!/^\d{8}$/.test(dateText) || !/^\d{2}:\d{2}$/.test(timeText || "")) {
     return null;
@@ -176,10 +188,6 @@ function isLineupConfirmedForGame(game, nowDate) {
   }
 
   if (state !== "1") {
-    return false;
-  }
-
-  if (Number(game.LINEUP_CK) <= 0) {
     return false;
   }
 
@@ -1619,21 +1627,22 @@ function hasGameCancellationFlag(game) {
   return blockedKeywords.some((keyword) => cancelName.includes(keyword));
 }
 
-function isPredictableGameState(game, includeFinished) {
+function isPredictableGameState(game, includeFinished, includeLiveGames = false) {
   if (hasGameCancellationFlag(game)) {
     return false;
   }
 
   const state = String(game.GAME_STATE_SC || "");
-  if (!includeFinished) {
-    return state === "1";
+  if (includeFinished || includeLiveGames) {
+    return ["1", "2", "3"].includes(state);
   }
 
-  return ["1", "2", "3"].includes(state);
+  return state === "1";
 }
 
 function predictGames(teamRows, gameList, homeAdvantage, options = {}) {
   const includeFinished = options.includeFinished === true;
+  const includeLiveGames = options.includeLiveGames === true;
   const teamMapByName = new Map(teamRows.map((row) => [row.team, row]));
   const teamMapById = new Map(
     teamRows
@@ -1643,7 +1652,7 @@ function predictGames(teamRows, gameList, homeAdvantage, options = {}) {
   const nowDate = new Date();
 
   return gameList
-    .filter((game) => isPredictableGameState(game, includeFinished))
+    .filter((game) => isPredictableGameState(game, includeFinished, includeLiveGames))
     .filter((game) => game.AWAY_NM && game.HOME_NM)
     .map((game) => {
       const away = teamMapById.get(String(game.AWAY_ID)) || teamMapByName.get(game.AWAY_NM);
@@ -1715,12 +1724,14 @@ async function buildKboPredictionsForDate({
   teamRows,
   homeAdvantage,
   includeFinished,
+  includeLiveGames,
   modelCoefficients,
 }) {
   const normalizedDate = await getGameDate(date);
   const gameList = await getGameList(normalizedDate.NOW_G_DT);
   const rawPredictions = predictGames(teamRows, gameList, homeAdvantage, {
     includeFinished,
+    includeLiveGames,
   });
 
   const withLineups = await Promise.all(
@@ -1786,6 +1797,7 @@ async function buildPredictionsForDate({
   teamRows,
   homeAdvantage,
   includeFinished,
+  includeLiveGames,
   modelCoefficients,
 }) {
   return buildKboPredictionsForDate({
@@ -1793,6 +1805,7 @@ async function buildPredictionsForDate({
     teamRows,
     homeAdvantage,
     includeFinished,
+    includeLiveGames,
     modelCoefficients,
   });
 }
@@ -3104,16 +3117,20 @@ app.get("/api/predictions/gameday", async (req, res) => {
     let requestedDate = date;
     let fallbackUsed = false;
     let fallbackDepth = 0;
+    const allowNextDateFallback = isAfterGameDateEnd(requestedDate, new Date());
+    const todayText = formatDateYYYYMMDD(new Date());
+    const keepTodayGamesVisible = !includeFinished && requestedDate === todayText && !allowNextDateFallback;
 
     let { normalizedDate, predictions } = await buildPredictionsForDate({
       date: requestedDate,
       teamRows,
       homeAdvantage,
       includeFinished,
+      includeLiveGames: keepTodayGamesVisible,
       modelCoefficients,
     });
 
-    if (!includeFinished && predictions.length === 0) {
+    if (!includeFinished && predictions.length === 0 && allowNextDateFallback) {
       let cursorDate = normalizedDate.AFTER_G_DT;
 
       while (cursorDate && fallbackDepth < 7) {
@@ -3122,6 +3139,7 @@ app.get("/api/predictions/gameday", async (req, res) => {
           teamRows,
           homeAdvantage,
           includeFinished,
+          includeLiveGames: false,
           modelCoefficients,
         });
 
