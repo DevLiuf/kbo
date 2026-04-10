@@ -1627,21 +1627,22 @@ function hasGameCancellationFlag(game) {
   return blockedKeywords.some((keyword) => cancelName.includes(keyword));
 }
 
-function isPredictableGameState(game, includeFinished) {
+function isPredictableGameState(game, includeFinished, includeLiveGames = false) {
   if (hasGameCancellationFlag(game)) {
     return false;
   }
 
   const state = String(game.GAME_STATE_SC || "");
-  if (!includeFinished) {
-    return state === "1";
+  if (includeFinished || includeLiveGames) {
+    return ["1", "2", "3"].includes(state);
   }
 
-  return ["1", "2", "3"].includes(state);
+  return state === "1";
 }
 
 function predictGames(teamRows, gameList, homeAdvantage, options = {}) {
   const includeFinished = options.includeFinished === true;
+  const includeLiveGames = options.includeLiveGames === true;
   const teamMapByName = new Map(teamRows.map((row) => [row.team, row]));
   const teamMapById = new Map(
     teamRows
@@ -1651,7 +1652,7 @@ function predictGames(teamRows, gameList, homeAdvantage, options = {}) {
   const nowDate = new Date();
 
   return gameList
-    .filter((game) => isPredictableGameState(game, includeFinished))
+    .filter((game) => isPredictableGameState(game, includeFinished, includeLiveGames))
     .filter((game) => game.AWAY_NM && game.HOME_NM)
     .map((game) => {
       const away = teamMapById.get(String(game.AWAY_ID)) || teamMapByName.get(game.AWAY_NM);
@@ -1723,12 +1724,14 @@ async function buildKboPredictionsForDate({
   teamRows,
   homeAdvantage,
   includeFinished,
+  includeLiveGames,
   modelCoefficients,
 }) {
   const normalizedDate = await getGameDate(date);
   const gameList = await getGameList(normalizedDate.NOW_G_DT);
   const rawPredictions = predictGames(teamRows, gameList, homeAdvantage, {
     includeFinished,
+    includeLiveGames,
   });
 
   const withLineups = await Promise.all(
@@ -1794,6 +1797,7 @@ async function buildPredictionsForDate({
   teamRows,
   homeAdvantage,
   includeFinished,
+  includeLiveGames,
   modelCoefficients,
 }) {
   return buildKboPredictionsForDate({
@@ -1801,6 +1805,7 @@ async function buildPredictionsForDate({
     teamRows,
     homeAdvantage,
     includeFinished,
+    includeLiveGames,
     modelCoefficients,
   });
 }
@@ -3113,12 +3118,15 @@ app.get("/api/predictions/gameday", async (req, res) => {
     let fallbackUsed = false;
     let fallbackDepth = 0;
     const allowNextDateFallback = isAfterGameDateEnd(requestedDate, new Date());
+    const todayText = formatDateYYYYMMDD(new Date());
+    const keepTodayGamesVisible = !includeFinished && requestedDate === todayText && !allowNextDateFallback;
 
     let { normalizedDate, predictions } = await buildPredictionsForDate({
       date: requestedDate,
       teamRows,
       homeAdvantage,
       includeFinished,
+      includeLiveGames: keepTodayGamesVisible,
       modelCoefficients,
     });
 
@@ -3131,6 +3139,7 @@ app.get("/api/predictions/gameday", async (req, res) => {
           teamRows,
           homeAdvantage,
           includeFinished,
+          includeLiveGames: false,
           modelCoefficients,
         });
 
