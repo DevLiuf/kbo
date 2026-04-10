@@ -179,10 +179,6 @@ function isLineupConfirmedForGame(game, nowDate) {
     return false;
   }
 
-  if (Number(game.LINEUP_CK) <= 0) {
-    return false;
-  }
-
   const startDate = parseKboDateTime(game.G_DT, game.G_TM);
   if (!startDate) {
     return false;
