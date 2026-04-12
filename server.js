@@ -93,6 +93,7 @@ const BETTING_RECOMMEND_EDGE_MIN = 0.24;
 const BETTING_AVOID_EDGE_MAX = 0.08;
 const BETTING_RECOMMEND_TOTAL_MIN = 7.2;
 const BETTING_AVOID_TOTAL_MAX = 6.9;
+const AWAY_WIN_DECISION_EDGE_MIN = 0.105;
 const LINEUP_BLEND_WEIGHT_PRE = 0.15;
 const LINEUP_BLEND_WEIGHT_POST = 0.4;
 const CONTACT_TO_RPG_COEFF = 8;
@@ -127,6 +128,26 @@ function formatDateYYYYMMDD(date) {
   return `${y}${m}${d}`;
 }
 
+function formatDateYYYYMMDDInTimeZone(date, timeZone) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+
+  const parts = formatter.formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  if (!year || !month || !day) {
+    return formatDateYYYYMMDD(date);
+  }
+
+  return `${year}${month}${day}`;
+}
+
 function yyyymmddToIsoDate(dateText) {
   if (!/^\d{8}$/.test(String(dateText || ""))) {
     return null;
@@ -157,11 +178,8 @@ function isAfterGameDateEnd(dateText, nowDate = new Date()) {
     return false;
   }
 
-  const year = Number(dateText.slice(0, 4));
-  const month = Number(dateText.slice(4, 6)) - 1;
-  const day = Number(dateText.slice(6, 8));
-  const endOfDay = new Date(year, month, day, 23, 59, 59, 999);
-  return nowDate > endOfDay;
+  const seoulToday = formatDateYYYYMMDDInTimeZone(nowDate, "Asia/Seoul");
+  return seoulToday > String(dateText);
 }
 
 function parseKboDateTime(dateText, timeText) {
@@ -2816,10 +2834,10 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       prediction.lineupConfirmed,
     );
 
-    const predictedWinner =
-      finalHomeWinProbability >= finalAwayWinProbability
-        ? prediction.homeTeam
-        : prediction.awayTeam;
+    const awayEdge = finalAwayWinProbability - finalHomeWinProbability;
+    const predictedWinner = awayEdge > AWAY_WIN_DECISION_EDGE_MIN
+      ? prediction.awayTeam
+      : prediction.homeTeam;
 
     const likelyScore = pickLikelyScoreByWinner({
       awayLambda: expectedAwayRuns,
@@ -3098,7 +3116,7 @@ app.get("/api/predictions/gameday", async (req, res) => {
   const date =
     typeof req.query.date === "string" && /^\d{8}$/.test(req.query.date)
       ? req.query.date
-      : formatDateYYYYMMDD(new Date());
+      : formatDateYYYYMMDDInTimeZone(new Date(), "Asia/Seoul");
   const rawHomeAdvantage = req.query.homeAdvantage;
   const homeAdvantage =
     rawHomeAdvantage === undefined ? 0.03 : toFiniteNumber(rawHomeAdvantage);
@@ -3118,7 +3136,7 @@ app.get("/api/predictions/gameday", async (req, res) => {
     let fallbackUsed = false;
     let fallbackDepth = 0;
     const allowNextDateFallback = isAfterGameDateEnd(requestedDate, new Date());
-    const todayText = formatDateYYYYMMDD(new Date());
+    const todayText = formatDateYYYYMMDDInTimeZone(new Date(), "Asia/Seoul");
     const keepTodayGamesVisible = !includeFinished && requestedDate === todayText && !allowNextDateFallback;
 
     let { normalizedDate, predictions } = await buildPredictionsForDate({

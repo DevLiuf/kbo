@@ -122,16 +122,29 @@ async function main() {
       || "https://kbo-predictor.vercel.app",
   ).replace(/\/$/, "");
   const autoPush = parseBooleanFlag(args.autoPush || process.env.HELPER_PC_AUTO_PUSH);
+  const resetSnapshots = parseBooleanFlag(args.resetSnapshots || process.env.HELPER_PC_RESET_SNAPSHOTS);
   const commitMessage = String(args.commitMessage || "Update ML model and saber tuning outputs").trim();
 
   if (!/^\d{8}$/.test(from) || !/^\d{8}$/.test(to)) {
     throw new Error("Usage: node scripts/helper-pc-train-and-tune.js --from=YYYYMMDD [--to=YYYYMMDD] [--baseUrl=https://kbo-predictor.vercel.app]");
   }
 
-  console.log("[helper-pc] 1/2 ML retrain start");
-  runNodeScript(path.join("scripts", "retrain-daily.js"));
+  console.log("[helper-pc] 1/3 Snapshot backfill start");
+  runNodeScript(path.join("scripts", "backfill-snapshots.js"), [
+    `--from=${from}`,
+    `--to=${to}`,
+    "--includeFinished=true",
+    `--baseUrl=${baseUrl}`,
+    `--resetSnapshots=${resetSnapshots ? "true" : "false"}`,
+  ]);
 
-  console.log("[helper-pc] 2/2 Saber tuning start");
+  console.log("[helper-pc] 2/3 ML retrain start");
+  runNodeScript(path.join("scripts", "retrain-daily.js"), [
+    `--from=${from}`,
+    `--to=${to}`,
+  ]);
+
+  console.log("[helper-pc] 3/3 Saber tuning start");
   runNodeScript(path.join("scripts", "tune-saber-weights.js"), [
     `--from=${from}`,
     `--to=${to}`,
