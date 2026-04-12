@@ -1543,6 +1543,8 @@ async function loadKboLineupForGame(game) {
       awayLineup: [],
       homeLineup: [],
       lineupDataReady: false,
+      lineupConfirmed: null,
+      lineupStatusText: null,
     };
   }
 
@@ -1564,6 +1566,7 @@ async function loadKboLineupForGame(game) {
     const teamMetaB = Array.isArray(payload?.[2]) ? payload[2][0] : null;
     const gridA = Array.isArray(payload?.[3]) ? payload[3][0] : null;
     const gridB = Array.isArray(payload?.[4]) ? payload[4][0] : null;
+    const lineupMeta = Array.isArray(payload?.[0]) ? payload[0][0] : null;
 
     const lineupA = parseKboLineupGrid(gridA);
     const lineupB = parseKboLineupGrid(gridB);
@@ -1590,10 +1593,20 @@ async function loadKboLineupForGame(game) {
       }
     }
 
+    const lineupCk = toFiniteNumber(lineupMeta?.LINEUP_CK);
+    const lineupConfirmed = Number.isFinite(lineupCk) ? lineupCk > 0 : null;
+    const lineupStatusText = lineupConfirmed === true
+      ? "금일 라인업 기준입니다."
+      : lineupConfirmed === false
+        ? "라인업 발표 전으로 최근 라인업 기준입니다."
+        : null;
+
     const value = {
       awayLineup,
       homeLineup,
       lineupDataReady: awayLineup.length > 0 || homeLineup.length > 0,
+      lineupConfirmed,
+      lineupStatusText,
     };
 
     KBO_LINEUP_CACHE.set(gameId, {
@@ -1607,6 +1620,8 @@ async function loadKboLineupForGame(game) {
       awayLineup: [],
       homeLineup: [],
       lineupDataReady: false,
+      lineupConfirmed: null,
+      lineupStatusText: null,
     };
   }
 }
@@ -1760,6 +1775,10 @@ async function buildKboPredictionsForDate({
         awayLineup: lineup.awayLineup,
         homeLineup: lineup.homeLineup,
         lineupDataReady: lineup.lineupDataReady,
+        lineupConfirmed: typeof lineup.lineupConfirmed === "boolean"
+          ? lineup.lineupConfirmed
+          : prediction.lineupConfirmed,
+        lineupStatusText: lineup.lineupStatusText,
       };
     }),
   );
@@ -1781,6 +1800,7 @@ async function buildKboPredictionsForDate({
     return {
       ...prediction,
       lineupConfirmed: prediction.lineupConfirmed,
+      lineupStatusText: prediction.lineupStatusText,
       awayLineup: awayMetrics.lineup,
       homeLineup: homeMetrics.lineup,
       ...starterProfiles,
@@ -2898,9 +2918,11 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       ? predictedWinner === prediction.actualWinner
       : null;
     const confidenceLevel = prediction.lineupConfirmed ? "lineup_confirmed" : "pre_lineup";
-    const note = prediction.lineupConfirmed
-      ? "금일 라인업 기준입니다."
-      : "라인업 발표 전으로 최근 라인업 기준입니다.";
+    const note = typeof prediction.lineupStatusText === "string" && prediction.lineupStatusText.trim()
+      ? prediction.lineupStatusText.trim()
+      : prediction.lineupConfirmed
+        ? "금일 라인업 기준입니다."
+        : "라인업 발표 전으로 최근 라인업 기준입니다.";
     const featureContributions = buildFeatureContributions(featureValues, model);
 
     return {
