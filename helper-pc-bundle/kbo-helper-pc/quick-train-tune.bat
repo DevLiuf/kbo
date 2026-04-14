@@ -26,19 +26,32 @@ if not defined NODE_EXE (
 
 echo [kbo-helper-pc] Using Node: !NODE_EXE!
 
-if "%~1"=="" (
-  echo [kbo-helper-pc] Running default train+tune...
-  "!NODE_EXE!" scripts\helper-pc-train-and-tune.js --from=20260331 --baseUrl=https://kbo-predictor.vercel.app --autoPush=true
+if exist "%~dp0..\..\.git" if exist "%~dp0..\..\scripts\helper-pc-train-and-tune.js" (
+  set "WORKDIR=%~dp0..\.."
+  set "TARGET_SCRIPT=scripts\helper-pc-train-and-tune.js"
+  echo [kbo-helper-pc] Git clone detected. Running root pipeline at !WORKDIR!
 ) else (
-  echo [kbo-helper-pc] Running with custom args: %*
-  "!NODE_EXE!" scripts\helper-pc-train-and-tune.js %*
+  set "WORKDIR=%~dp0"
+  set "TARGET_SCRIPT=scripts\helper-pc-train-and-tune.js"
+  echo [kbo-helper-pc] Standalone bundle mode. Running local pipeline.
 )
 
-if errorlevel 1 (
+pushd "!WORKDIR!" >nul
+if "%~1"=="" (
+  echo [kbo-helper-pc] Running default train+tune...
+  "!NODE_EXE!" !TARGET_SCRIPT! --from=20260331 --baseUrl=https://kbo-predictor.vercel.app --autoPush=true
+) else (
+  echo [kbo-helper-pc] Running with custom args: %*
+  "!NODE_EXE!" !TARGET_SCRIPT! %*
+)
+set "RUN_EXIT=%ERRORLEVEL%"
+popd >nul
+
+if not "%RUN_EXIT%"=="0" (
   echo.
   echo [kbo-helper-pc] FAILED. Check logs above.
   pause
-  exit /b 1
+  exit /b %RUN_EXIT%
 )
 
 echo.
