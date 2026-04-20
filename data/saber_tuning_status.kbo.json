@@ -1,7 +1,7 @@
 {
-  "tunedAt": "2026-04-19T14:02:48.976Z",
+  "tunedAt": "2026-04-20T14:02:46.046Z",
   "rangeFrom": "20260331",
-  "rangeTo": "20260419",
+  "rangeTo": "20260420",
   "sampleSize": 92,
   "best": {
     "clampThreshold": 3,
@@ -23,14 +23,14 @@
       "baseWeight": 0.7,
       "markovWeight": 0.2,
       "monteWeight": 0.1,
-      "mae": 2.3359951086956547
+      "mae": 2.3359951086956543
     },
     {
       "clampThreshold": 3,
       "baseWeight": 0.65,
       "markovWeight": 0.25,
       "monteWeight": 0.1,
-      "mae": 2.336377989130434
+      "mae": 2.3363779891304337
     },
     {
       "clampThreshold": 3,
