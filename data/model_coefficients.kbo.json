@@ -1,9 +1,9 @@
 {
   "version": "trained-logistic-kbo-2026-04-21",
-  "trainedAt": "2026-04-21T13:11:05.923Z",
-  "samples": 85,
+  "trainedAt": "2026-04-21T13:31:51.173Z",
+  "samples": 86,
   "trainSamples": 72,
-  "validSamples": 13,
+  "validSamples": 14,
   "trainingFromGameDate": "20260331",
   "trainingToGameDate": "20260421",
   "holdoutDays": 3,
@@ -26,19 +26,19 @@
   "preLineupShrink": 0.75,
   "blendWeightPost": 0.65,
   "blendWeightPre": 0.45,
-  "plattA": -0.005734,
-  "plattB": 0.149167,
+  "plattA": 0.058259,
+  "plattB": 0.281782,
   "temperature": 1,
   "metrics": {
     "train": {
-      "logLoss": 0.7038110700003563,
-      "brier": 0.25531342878476626,
+      "logLoss": 0.6741450037992389,
+      "brier": 0.24073334886648878,
       "accuracy": 0.4722222222222222
     },
     "validation": {
-      "logLoss": 0.6901694306824928,
-      "brier": 0.2485134849025657,
-      "accuracy": 0.5384615384615384
+      "logLoss": 0.6809115536490831,
+      "brier": 0.24405595536155045,
+      "accuracy": 0.5714285714285714
     }
   }
 }
