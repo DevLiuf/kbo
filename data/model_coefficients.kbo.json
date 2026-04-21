@@ -1,6 +1,6 @@
 {
-  "version": "trained-logistic-kbo-2026-04-20",
-  "trainedAt": "2026-04-20T14:01:39.959Z",
+  "version": "trained-logistic-kbo-2026-04-21",
+  "trainedAt": "2026-04-21T07:23:38.574Z",
   "samples": 82,
   "trainSamples": 70,
   "validSamples": 12,
@@ -22,11 +22,13 @@
   "bullpenDiff": -0.28927,
   "homeAdvantage": 1.36585,
   "lineupSignal": -0.096648,
+  "marketOddsDiff": 0.24505,
   "preLineupShrink": 0.75,
   "blendWeightPost": 0.65,
   "blendWeightPre": 0.45,
   "plattA": -0.061948,
   "plattB": -0.001056,
+  "temperature": 1,
   "metrics": {
     "train": {
       "logLoss": 0.735370337821243,

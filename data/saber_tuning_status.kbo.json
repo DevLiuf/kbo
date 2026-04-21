@@ -1,7 +1,7 @@
 {
-  "tunedAt": "2026-04-20T14:02:46.046Z",
+  "tunedAt": "2026-04-21T07:24:44.686Z",
   "rangeFrom": "20260331",
-  "rangeTo": "20260420",
+  "rangeTo": "20260421",
   "sampleSize": 92,
   "best": {
     "clampThreshold": 3,
