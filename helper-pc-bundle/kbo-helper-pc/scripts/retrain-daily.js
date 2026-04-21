@@ -26,6 +26,16 @@ function sleep(ms) {
   });
 }
 
+function parseBooleanFlag(value, fallback = false) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
 function runNodeScript(scriptFile, args = []) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [scriptFile, ...args], {
@@ -84,6 +94,10 @@ async function main() {
   const retryCount = Number(args.retryCount || 3);
   const retryDelayMs = Number(args.retryDelayMs || 7000);
   const minExamples = Number(args.minExamples || 30);
+  const allowInsufficient = parseBooleanFlag(
+    args.allowInsufficient || process.env.KBO_ALLOW_INSUFFICIENT_RETRAIN,
+    false,
+  );
 
   const resultsPath = path.join(process.cwd(), "data", `game_results.${league}.ndjson`);
   const examplesPath = path.join(process.cwd(), "data", `training_examples.${league}.ndjson`);
@@ -110,9 +124,29 @@ async function main() {
 
     const examples = await readNdjson(examplesPath);
     if (examples.length < minExamples) {
-      throw new Error(
-        `insufficient training examples (${examples.length} < ${minExamples}), skip retrain to avoid unstable model`,
-      );
+      const message = `insufficient training examples (${examples.length} < ${minExamples}), skip retrain to avoid unstable model`;
+      if (allowInsufficient) {
+        const finishedAt = new Date().toISOString();
+        await writeStatus(statusPath, {
+          ok: true,
+          skipped: true,
+          skipReason: "insufficient_examples",
+          league,
+          startedAt,
+          finishedAt,
+          from,
+          to,
+          holdoutDays,
+          retryCount,
+          retryDelayMs,
+          minExamples,
+          trainingExamples: examples.length,
+          message,
+        });
+        console.log(`[daily-retrain] skipped: ${message}`);
+        return;
+      }
+      throw new Error(message);
     }
 
     try {
@@ -138,6 +172,7 @@ async function main() {
     const finishedAt = new Date().toISOString();
     await writeStatus(statusPath, {
       ok: true,
+      skipped: false,
       league,
       startedAt,
       finishedAt,
@@ -147,6 +182,7 @@ async function main() {
       retryCount,
       retryDelayMs,
       minExamples,
+      trainingExamples: examples.length,
       message: "daily retrain completed",
     });
     console.log("[daily-retrain] completed");
@@ -154,6 +190,7 @@ async function main() {
     const finishedAt = new Date().toISOString();
     await writeStatus(statusPath, {
       ok: false,
+      skipped: false,
       league,
       startedAt,
       finishedAt,

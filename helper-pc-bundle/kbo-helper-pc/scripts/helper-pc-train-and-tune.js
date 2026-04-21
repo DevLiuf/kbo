@@ -11,12 +11,52 @@ function formatDateYYYYMMDD(date) {
   return `${y}${m}${d}`;
 }
 
-function runNodeScript(scriptFile, scriptArgs = []) {
+function getSeoulTodayYYYYMMDD() {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+
+  const parts = formatter.formatToParts(new Date());
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  if (!year || !month || !day) {
+    return formatDateYYYYMMDD(new Date());
+  }
+
+  return `${year}${month}${day}`;
+}
+
+function parseBooleanFlag(value, fallback = false) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
+function parseNumberFlag(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function runNodeScript(scriptFile, scriptArgs = [], timeoutMs = 0) {
   const result = spawnSync(process.execPath, [scriptFile, ...scriptArgs], {
     stdio: "inherit",
     cwd: process.cwd(),
+    timeout: timeoutMs > 0 ? timeoutMs : undefined,
   });
 
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.signal) {
+    throw new Error(`Failed: node ${scriptFile} ${scriptArgs.join(" ")} (signal: ${result.signal})`);
+  }
   if (result.status !== 0) {
     throw new Error(`Failed: node ${scriptFile} ${scriptArgs.join(" ")}`);
   }
@@ -36,9 +76,29 @@ function runCommand(command, commandArgs = [], options = {}) {
   return result;
 }
 
-function parseBooleanFlag(value) {
-  const normalized = String(value || "").trim().toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "y";
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function runStageWithRetry(stageName, attempts, retryDelayMs, fn) {
+  let lastError = null;
+  for (let i = 1; i <= attempts; i += 1) {
+    try {
+      console.log(`[helper-pc] ${stageName} attempt ${i}/${attempts}`);
+      await fn();
+      return;
+    } catch (error) {
+      lastError = error;
+      console.error(`[helper-pc] ${stageName} failed: ${error.message}`);
+      if (i < attempts) {
+        console.log(`[helper-pc] waiting ${retryDelayMs}ms before retry`);
+        await sleep(retryDelayMs);
+      }
+    }
+  }
+  throw lastError;
 }
 
 function autoCommitAndPush(commitMessage) {
@@ -53,6 +113,7 @@ function autoCommitAndPush(commitMessage) {
   const targetFiles = [
     path.join("data", "model_coefficients.kbo.json"),
     path.join("data", "saber_tuning_status.kbo.json"),
+    path.join("data", "daily_retrain_status.kbo.json"),
   ];
 
   const addResult = runCommand("git", ["add", ...targetFiles], { stdio: "inherit" });
@@ -92,49 +153,75 @@ async function readJson(filePath) {
   return JSON.parse(raw);
 }
 
+function assertDateRange(from, to) {
+  if (!/^\d{8}$/.test(from) || !/^\d{8}$/.test(to)) {
+    throw new Error("Usage: node scripts/helper-pc-train-and-tune.js --from=YYYYMMDD [--to=YYYYMMDD] [--baseUrl=https://kbo-predictor.vercel.app]");
+  }
+  if (from > to) {
+    throw new Error(`invalid date range: from(${from}) > to(${to})`);
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const from = String(args.from || "20260331").trim();
-  const to = String(args.to || formatDateYYYYMMDD(new Date())).trim();
+  const to = String(args.to || getSeoulTodayYYYYMMDD()).trim();
   const baseUrl = String(
     args.baseUrl
       || process.env.PREDICT_BASE_URL
       || "https://kbo-predictor.vercel.app",
   ).replace(/\/$/, "");
-  const autoPush = parseBooleanFlag(args.autoPush || process.env.HELPER_PC_AUTO_PUSH);
-  const resetSnapshots = parseBooleanFlag(args.resetSnapshots || process.env.HELPER_PC_RESET_SNAPSHOTS);
+
+  assertDateRange(from, to);
+
+  const autoPush = parseBooleanFlag(args.autoPush || process.env.HELPER_PC_AUTO_PUSH, false);
+  const resetSnapshots = parseBooleanFlag(args.resetSnapshots || process.env.HELPER_PC_RESET_SNAPSHOTS, false);
+  const allowInsufficient = parseBooleanFlag(args.allowInsufficient || process.env.HELPER_PC_ALLOW_INSUFFICIENT, true);
+  const stageRetryCount = Math.max(1, parseNumberFlag(args.stageRetryCount || process.env.HELPER_PC_STAGE_RETRY_COUNT, 2));
+  const stageRetryDelayMs = Math.max(0, parseNumberFlag(args.stageRetryDelayMs || process.env.HELPER_PC_STAGE_RETRY_DELAY_MS, 5000));
+  const stageTimeoutMs = Math.max(0, parseNumberFlag(args.stageTimeoutMs || process.env.HELPER_PC_STAGE_TIMEOUT_MS, 25 * 60 * 1000));
+  const minTuneSample = Math.max(1, parseNumberFlag(args.minTuneSample || process.env.HELPER_PC_MIN_TUNE_SAMPLE, 20));
   const commitMessage = String(args.commitMessage || "Update ML model and saber tuning outputs").trim();
 
-  if (!/^\d{8}$/.test(from) || !/^\d{8}$/.test(to)) {
-    throw new Error("Usage: node scripts/helper-pc-train-and-tune.js --from=YYYYMMDD --to=YYYYMMDD [--baseUrl=https://kbo-predictor.vercel.app]");
-  }
-
   console.log("[helper-pc] 1/3 Snapshot backfill start");
-  runNodeScript(path.join("scripts", "backfill-snapshots.js"), [
-    `--from=${from}`,
-    `--to=${to}`,
-    "--includeFinished=true",
-    `--baseUrl=${baseUrl}`,
-    `--resetSnapshots=${resetSnapshots ? "true" : "false"}`,
-  ]);
+  await runStageWithRetry("snapshot-backfill", stageRetryCount, stageRetryDelayMs, async () => {
+    runNodeScript(path.join("scripts", "backfill-snapshots.js"), [
+      `--from=${from}`,
+      `--to=${to}`,
+      "--includeFinished=true",
+      `--baseUrl=${baseUrl}`,
+      `--resetSnapshots=${resetSnapshots ? "true" : "false"}`,
+    ], stageTimeoutMs);
+  });
 
   console.log("[helper-pc] 2/3 ML retrain start");
-  runNodeScript(path.join("scripts", "retrain-daily.js"), [
-    `--from=${from}`,
-    `--to=${to}`,
-  ]);
+  await runStageWithRetry("ml-retrain", stageRetryCount, stageRetryDelayMs, async () => {
+    runNodeScript(path.join("scripts", "retrain-daily.js"), [
+      `--from=${from}`,
+      `--to=${to}`,
+      `--allowInsufficient=${allowInsufficient ? "true" : "false"}`,
+    ], stageTimeoutMs);
+  });
+
+  const retrainStatusPath = path.join(process.cwd(), "data", "daily_retrain_status.kbo.json");
+  const retrainStatus = await readJson(retrainStatusPath);
+  const retrainSkipped = retrainStatus?.ok === true && retrainStatus?.skipped === true;
 
   console.log("[helper-pc] 3/3 Saber tuning start");
-  runNodeScript(path.join("scripts", "tune-saber-weights.js"), [
-    `--from=${from}`,
-    `--to=${to}`,
-    `--baseUrl=${baseUrl}`,
-  ]);
+  await runStageWithRetry("saber-tuning", stageRetryCount, stageRetryDelayMs, async () => {
+    runNodeScript(path.join("scripts", "tune-saber-weights.js"), [
+      `--from=${from}`,
+      `--to=${to}`,
+      `--baseUrl=${baseUrl}`,
+    ], stageTimeoutMs);
+  });
 
   const modelPath = path.join(process.cwd(), "data", "model_coefficients.kbo.json");
   const saberPath = path.join(process.cwd(), "data", "saber_tuning_status.kbo.json");
   const model = await readJson(modelPath);
   const saber = await readJson(saberPath);
+  const tuneSampleHealthy = Number(saber.sampleSize || 0) >= minTuneSample;
+
   const autoPushResult = autoPush
     ? autoCommitAndPush(commitMessage)
     : { status: "disabled" };
@@ -147,17 +234,30 @@ async function main() {
       from: model.trainingFromGameDate || null,
       to: model.trainingToGameDate || null,
     },
+    retrainStatus: {
+      ok: retrainStatus?.ok === true,
+      skipped: retrainSkipped,
+      reason: retrainStatus?.skipReason || null,
+      trainingExamples: retrainStatus?.trainingExamples ?? null,
+    },
     saberTunedAt: saber.tunedAt,
     saberRange: {
       from: saber.rangeFrom || null,
       to: saber.rangeTo || null,
     },
+    saberSampleSize: saber.sampleSize,
+    saberSampleHealthy: tuneSampleHealthy,
+    minTuneSample,
     autoPush: autoPushResult,
     next: {
-      commit: "git add data/model_coefficients.kbo.json data/saber_tuning_status.kbo.json && git commit -m \"Update ML model and saber tuning outputs\" && git push",
-      auto: "node scripts/helper-pc-train-and-tune.js --from=20260331 --autoPush=true",
+      daily: "node scripts/helper-pc-train-and-tune.js --from=20260331 --autoPush=true",
+      resetRun: "node scripts/helper-pc-train-and-tune.js --from=20260331 --resetSnapshots=true",
     },
   }, null, 2));
+
+  if (!tuneSampleHealthy) {
+    console.error(`[helper-pc] warning: saber sampleSize(${saber.sampleSize}) < minTuneSample(${minTuneSample})`);
+  }
 }
 
 main().catch((error) => {
