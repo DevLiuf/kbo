@@ -84,7 +84,38 @@ function fitPlatt(logits, labels, epochs = 1200, lr = 0.01, l2 = 0.0001) {
   return { plattA: a, plattB: b };
 }
 
-function metrics(rows, weights, platt) {
+function calibratedProbFromRaw(raw, platt, temperature) {
+  const safeTemp = Number.isFinite(temperature) && temperature > 0 ? temperature : 1;
+  const calibrated = sigmoid((platt.plattA * raw + platt.plattB) / safeTemp);
+  return boundedProb(calibrated);
+}
+
+function fitTemperature(logits, labels, platt) {
+  if (logits.length < 5 || labels.length !== logits.length) {
+    return 1;
+  }
+
+  let bestTemp = 1;
+  let bestLoss = Number.POSITIVE_INFINITY;
+
+  for (let temp = 1.0; temp <= 2.5; temp += 0.05) {
+    let loss = 0;
+    for (let i = 0; i < logits.length; i += 1) {
+      const p = calibratedProbFromRaw(logits[i], platt, temp);
+      loss += -(labels[i] * Math.log(p) + (1 - labels[i]) * Math.log(1 - p));
+    }
+
+    const avgLoss = loss / logits.length;
+    if (avgLoss < bestLoss) {
+      bestLoss = avgLoss;
+      bestTemp = temp;
+    }
+  }
+
+  return bestTemp;
+}
+
+function metrics(rows, weights, platt, temperature) {
   if (rows.length === 0) {
     return { logLoss: null, accuracy: null, brier: null };
   }
@@ -94,8 +125,7 @@ function metrics(rows, weights, platt) {
   let correct = 0;
   for (const row of rows) {
     const raw = dot(weights, row);
-    const calibrated = sigmoid(platt.plattA * raw + platt.plattB);
-    const p = boundedProb(calibrated);
+    const p = calibratedProbFromRaw(raw, platt, temperature);
     loss += -(row.labelHomeWin * Math.log(p) + (1 - row.labelHomeWin) * Math.log(1 - p));
     brier += (p - row.labelHomeWin) ** 2;
     const pred = p >= 0.5 ? 1 : 0;
@@ -213,9 +243,10 @@ async function main() {
   const logits = validRows.map((row) => dot(w, row));
   const labels = validRows.map((row) => row.labelHomeWin);
   const platt = validRows.length >= 3 ? fitPlatt(logits, labels) : { plattA: 1, plattB: 0 };
+  const temperature = fitTemperature(logits, labels, platt);
 
-  const trainMetric = metrics(trainRows, w, platt);
-  const validMetric = metrics(validRows, w, platt);
+  const trainMetric = metrics(trainRows, w, platt, temperature);
+  const validMetric = metrics(validRows, w, platt, temperature);
 
   const model = {
     version,
@@ -228,7 +259,7 @@ async function main() {
     holdoutDays,
     intercept: Number(w.intercept.toFixed(6)),
     offenseDiff: Number(w.offenseDiff.toFixed(6)),
-    defenseDiff: Number(Math.abs(w.defenseDiff).toFixed(6)),
+    defenseDiff: Number(w.defenseDiff.toFixed(6)),
     starterEraDiff: Number(w.starterEraDiff.toFixed(6)),
     runCreationResidualDiff: Number(w.runCreationResidualDiff.toFixed(6)),
     powerContactMixDiff: Number(w.powerContactMixDiff.toFixed(6)),
@@ -241,11 +272,13 @@ async function main() {
     bullpenDiff: Number(w.bullpenDiff.toFixed(6)),
     homeAdvantage: Number(w.homeAdvantage.toFixed(6)),
     lineupSignal: Number(w.lineupSignal.toFixed(6)),
+    marketOddsDiff: 0,
     preLineupShrink: 0.75,
     blendWeightPost: 0.65,
     blendWeightPre: 0.45,
     plattA: Number(platt.plattA.toFixed(6)),
     plattB: Number(platt.plattB.toFixed(6)),
+    temperature: Number(temperature.toFixed(6)),
     metrics: {
       train: trainMetric,
       validation: validMetric,

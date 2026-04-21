@@ -605,7 +605,6 @@ function buildFeatureContributions(featureValues, model) {
     ["bullpenDiff", "불펜 지표 (SV+HLD/KBB)", featureValues.bullpenDiff, model.bullpenDiff],
     ["homeAdvantage", "홈 어드밴티지", featureValues.homeAdvantage, model.homeAdvantage],
     ["lineupSignal", "라인업 확정", featureValues.lineupSignal, model.lineupSignal],
-    ["marketOddsDiff", "시장 배당 신호", featureValues.marketOddsDiff, Number(model.marketOddsDiff) || 0],
   ];
 
   if (Number.isFinite(model.battingAvgDiff)) {
@@ -2878,13 +2877,8 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
     const starterSoPer9Diff = starterSoPer9RawDiff * starterEraReliability;
     const starterRunsPer9Diff = starterRunsPer9RawDiff * starterEraReliability;
     const lineupSignal = prediction.lineupConfirmed ? 1 : 0;
-    const marketHomeWinProbabilityRaw = marketOddsByGameKey.get(String(prediction.gameKey || prediction.gameId || ""));
-    const marketHomeWinProbability = Number.isFinite(marketHomeWinProbabilityRaw)
-      ? clamp(marketHomeWinProbabilityRaw, 0.01, 0.99)
-      : null;
-    const marketOddsDiff = Number.isFinite(marketHomeWinProbability)
-      ? marketHomeWinProbability - 0.5
-      : 0;
+    const marketHomeWinProbability = null;
+    const marketOddsDiff = 0;
 
     const awayLineupWar = getLineupWarSummary(prediction.awayLineup);
     const homeLineupWar = getLineupWarSummary(prediction.homeLineup);
@@ -2930,7 +2924,6 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       homeAdvantage,
       lineupSignal,
       lineupWarDiff,
-      marketOddsDiff,
     };
 
     const lineupWarLinearAdj = lineupSignal === 1
@@ -2958,7 +2951,6 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       + (featureValues.bullpenDiff * model.bullpenDiff)
       + (featureValues.homeAdvantage * model.homeAdvantage)
       + (featureValues.lineupSignal * model.lineupSignal)
-      + (featureValues.marketOddsDiff * (Number(model.marketOddsDiff) || 0))
       + lineupWarLinearAdj;
     const calibratedMlProb = applyPlattCalibration(mlLinear, model);
     const mlHomeWinProbability = clamp(calibratedMlProb, 0.005, 0.995);

@@ -141,6 +141,8 @@ async function main() {
           retryDelayMs,
           minExamples,
           trainingExamples: examples.length,
+          trainingFromGameDate: null,
+          trainingToGameDate: null,
           message,
         });
         console.log(`[daily-retrain] skipped: ${message}`);
@@ -169,6 +171,8 @@ async function main() {
       `--model=${modelPath}`,
     ]);
 
+    const trainedModelRaw = await fs.readFile(modelPath, "utf8");
+    const trainedModel = JSON.parse(trainedModelRaw);
     const finishedAt = new Date().toISOString();
     await writeStatus(statusPath, {
       ok: true,
@@ -183,6 +187,8 @@ async function main() {
       retryDelayMs,
       minExamples,
       trainingExamples: examples.length,
+      trainingFromGameDate: trainedModel.trainingFromGameDate || null,
+      trainingToGameDate: trainedModel.trainingToGameDate || null,
       message: "daily retrain completed",
     });
     console.log("[daily-retrain] completed");
@@ -200,6 +206,8 @@ async function main() {
       retryCount,
       retryDelayMs,
       minExamples,
+      trainingFromGameDate: null,
+      trainingToGameDate: null,
       error: error.message,
     });
     console.error(`[daily-retrain] failed: ${error.message}`);

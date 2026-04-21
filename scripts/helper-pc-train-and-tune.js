@@ -207,18 +207,37 @@ async function main() {
   const retrainStatus = await readJson(retrainStatusPath);
   const retrainSkipped = retrainStatus?.ok === true && retrainStatus?.skipped === true;
 
-  console.log("[helper-pc] 3/3 Saber tuning start");
+  const modelPath = path.join(process.cwd(), "data", "model_coefficients.kbo.json");
+  const saberPath = path.join(process.cwd(), "data", "saber_tuning_status.kbo.json");
+  const model = await readJson(modelPath);
+
+  const hasRetrainTrainRange = retrainStatus?.ok === true
+    && retrainSkipped === false
+    && /^\d{8}$/.test(String(retrainStatus.trainingFromGameDate || ""))
+    && /^\d{8}$/.test(String(retrainStatus.trainingToGameDate || ""));
+  const hasModelTrainRange = /^\d{8}$/.test(String(model.trainingFromGameDate || ""))
+    && /^\d{8}$/.test(String(model.trainingToGameDate || ""));
+  const tuneFrom = hasRetrainTrainRange
+    ? String(retrainStatus.trainingFromGameDate)
+    : hasModelTrainRange
+      ? String(model.trainingFromGameDate)
+      : from;
+  const tuneTo = hasRetrainTrainRange
+    ? String(retrainStatus.trainingToGameDate)
+    : hasModelTrainRange
+      ? String(model.trainingToGameDate)
+      : to;
+  assertDateRange(tuneFrom, tuneTo);
+
+  console.log(`[helper-pc] 3/3 Saber tuning start (range: ${tuneFrom}~${tuneTo})`);
   await runStageWithRetry("saber-tuning", stageRetryCount, stageRetryDelayMs, async () => {
     runNodeScript(path.join("scripts", "tune-saber-weights.js"), [
-      `--from=${from}`,
-      `--to=${to}`,
+      `--from=${tuneFrom}`,
+      `--to=${tuneTo}`,
       `--baseUrl=${baseUrl}`,
     ], stageTimeoutMs);
   });
 
-  const modelPath = path.join(process.cwd(), "data", "model_coefficients.kbo.json");
-  const saberPath = path.join(process.cwd(), "data", "saber_tuning_status.kbo.json");
-  const model = await readJson(modelPath);
   const saber = await readJson(saberPath);
   const tuneSampleHealthy = Number(saber.sampleSize || 0) >= minTuneSample;
 
@@ -239,8 +258,16 @@ async function main() {
       skipped: retrainSkipped,
       reason: retrainStatus?.skipReason || null,
       trainingExamples: retrainStatus?.trainingExamples ?? null,
+      trainingRange: {
+        from: retrainStatus?.trainingFromGameDate || null,
+        to: retrainStatus?.trainingToGameDate || null,
+      },
     },
     saberTunedAt: saber.tunedAt,
+    tuningInputRange: {
+      from: tuneFrom,
+      to: tuneTo,
+    },
     saberRange: {
       from: saber.rangeFrom || null,
       to: saber.rangeTo || null,

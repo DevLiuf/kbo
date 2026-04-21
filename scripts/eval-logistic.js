@@ -31,7 +31,10 @@ function calibratedProb(model, row) {
   const raw = dot(model, row);
   const a = Number.isFinite(model.plattA) ? model.plattA : 1;
   const b = Number.isFinite(model.plattB) ? model.plattB : 0;
-  return Math.max(1e-9, Math.min(1 - 1e-9, sigmoid(a * raw + b)));
+  const temperature = Number.isFinite(model.temperature) && model.temperature > 0
+    ? model.temperature
+    : 1;
+  return Math.max(1e-9, Math.min(1 - 1e-9, sigmoid((a * raw + b) / temperature)));
 }
 
 async function main() {

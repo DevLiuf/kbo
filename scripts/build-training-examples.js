@@ -47,16 +47,86 @@ function latestSnapshotsByGame(rows) {
   return map;
 }
 
+function toFiniteNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function americanOddsToProbability(odds) {
+  const numeric = toFiniteNumber(odds);
+  if (!Number.isFinite(numeric) || numeric === 0) {
+    return null;
+  }
+
+  if (numeric > 0) {
+    return 100 / (numeric + 100);
+  }
+
+  const absValue = Math.abs(numeric);
+  return absValue / (absValue + 100);
+}
+
+function resolveMarketHomeWinProbability(row) {
+  const directHomeProb = toFiniteNumber(row.homeWinProbability ?? row.homeProb ?? row.homeImpliedProb);
+  const directAwayProb = toFiniteNumber(row.awayWinProbability ?? row.awayProb ?? row.awayImpliedProb);
+
+  if (Number.isFinite(directHomeProb) && Number.isFinite(directAwayProb) && (directHomeProb + directAwayProb) > 0) {
+    const sum = directHomeProb + directAwayProb;
+    return directHomeProb / sum;
+  }
+
+  if (Number.isFinite(directHomeProb)) {
+    return Math.max(0, Math.min(1, directHomeProb));
+  }
+
+  const homeMoneylineProb = americanOddsToProbability(row.homeMoneyline ?? row.homeOdds);
+  const awayMoneylineProb = americanOddsToProbability(row.awayMoneyline ?? row.awayOdds);
+  if (Number.isFinite(homeMoneylineProb) && Number.isFinite(awayMoneylineProb) && (homeMoneylineProb + awayMoneylineProb) > 0) {
+    const sum = homeMoneylineProb + awayMoneylineProb;
+    return homeMoneylineProb / sum;
+  }
+
+  return null;
+}
+
+function latestMarketOddsByGame(rows) {
+  const map = new Map();
+  for (const row of rows) {
+    const key = resolveRowGameKey(row);
+    if (!key) {
+      continue;
+    }
+
+    const rowTimestamp = typeof row.asOfTimestamp === "string"
+      ? row.asOfTimestamp
+      : `${String(row.gameDate || "")}_000000`;
+    const current = map.get(key);
+    const currentTimestamp = current && typeof current.asOfTimestamp === "string"
+      ? current.asOfTimestamp
+      : "";
+    if (!current || rowTimestamp > currentTimestamp) {
+      map.set(key, row);
+    }
+  }
+  return map;
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const snapshotsPath = args.snapshots || path.join(process.cwd(), "data", "prediction_snapshots.ndjson");
   const resultsPath = args.results || path.join(process.cwd(), "data", "game_results.kbo.ndjson");
   const outputPath = args.output || path.join(process.cwd(), "data", "training_examples.kbo.ndjson");
+  const marketOddsPath = args.marketOdds || path.join(process.cwd(), "data", "market_odds.kbo.ndjson");
 
   const snapshots = (await readNdjson(snapshotsPath)).filter((row) => String(row.league || "kbo").toLowerCase() === "kbo");
   const results = (await readNdjson(resultsPath)).filter((row) => String(row.league || "kbo").toLowerCase() === "kbo");
+  const marketOddsRows = (await readNdjson(marketOddsPath)).filter((row) => {
+    const league = String(row.league || "kbo").toLowerCase();
+    return league === "kbo";
+  });
 
   const latestSnapshot = latestSnapshotsByGame(snapshots);
+  const latestMarketOdds = latestMarketOddsByGame(marketOddsRows);
   const completedResults = results.filter((row) => row.completed === true);
 
   const examples = [];
@@ -82,6 +152,9 @@ async function main() {
       hrPerGameDiff,
     });
 
+    const marketHomeWinProbability = null;
+    const marketOddsDiff = 0;
+
     examples.push({
       league: "kbo",
       gameId: result.gameId,
@@ -105,6 +178,10 @@ async function main() {
       bullpenDiff: Number(feat.bullpenDiff) || 0,
       homeAdvantage: Number(feat.homeAdvantage) || 0,
       lineupSignal: feat.lineupConfirmed ? 1 : 0,
+      marketHomeWinProbability: Number.isFinite(marketHomeWinProbability)
+        ? Number(marketHomeWinProbability.toFixed(6))
+        : null,
+      marketOddsDiff: Number(marketOddsDiff.toFixed(6)),
     });
   }
 
