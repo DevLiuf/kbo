@@ -18,6 +18,7 @@ const SNAPSHOT_DIR = path.join(__dirname, "data");
 const SNAPSHOT_FILE = path.join(SNAPSHOT_DIR, "prediction_snapshots.ndjson");
 const MODEL_COEFFICIENTS_FILE = path.join(SNAPSHOT_DIR, "model_coefficients.json");
 const SABER_TUNING_STATUS_FILE = path.join(SNAPSHOT_DIR, "saber_tuning_status.kbo.json");
+const MARKET_ODDS_FILE = path.join(SNAPSHOT_DIR, "market_odds.kbo.ndjson");
 
 const DEFAULT_MODEL_COEFFICIENTS = {
   version: DEFAULT_MODEL_VERSION,
@@ -36,6 +37,7 @@ const DEFAULT_MODEL_COEFFICIENTS = {
   bullpenDiff: 0.18,
   homeAdvantage: 1.4,
   lineupSignal: 0.12,
+  marketOddsDiff: 0,
   preLineupShrink: 0.75,
   blendWeightPost: 0.65,
   blendWeightPre: 0.45,
@@ -89,11 +91,15 @@ const SABER_BLEND_BASE_WEIGHT = 0.7;
 const SABER_BLEND_MARKOV_WEIGHT = 0.25;
 const SABER_BLEND_MONTE_WEIGHT = 0.05;
 const SABER_CLAMP_THRESHOLD = 2.5;
-const BETTING_RECOMMEND_EDGE_MIN = 0.24;
+const BETTING_RECOMMEND_EDGE_MIN = 0.18;
 const BETTING_AVOID_EDGE_MAX = 0.08;
 const BETTING_RECOMMEND_TOTAL_MIN = 7.2;
 const BETTING_AVOID_TOTAL_MAX = 6.9;
 const AWAY_WIN_DECISION_EDGE_MIN = 0.105;
+const SAME_DAY_POLICY_MIN_PROB = 0.9;
+const SAME_DAY_POLICY_MIN_GAP = 0.2;
+const SAME_DAY_POLICY_MIN_RUN_DIFF = 0;
+const SAME_DAY_POLICY_ALLOWED_TIERS = new Set(["elite_edge"]);
 const LINEUP_BLEND_WEIGHT_PRE = 0.15;
 const LINEUP_BLEND_WEIGHT_POST = 0.4;
 const CONTACT_TO_RPG_COEFF = 8;
@@ -102,6 +108,8 @@ const POWER_CONTACT_MIX_COEFF = 1.6;
 const CONTACT_PENALTY_MIX_COEFF = 10;
 
 const cachedPayloadByKey = new Map();
+const MARKET_ODDS_CACHE_TTL_MS = 60 * 1000;
+const marketOddsCacheByLeague = new Map();
 
 function normalizeLeague(rawLeague) {
   const league = String(rawLeague || "kbo").trim().toLowerCase();
@@ -115,6 +123,113 @@ function getLeagueModelCoefficientsPath(league) {
 function toFiniteNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function americanOddsToProbability(odds) {
+  const numeric = toFiniteNumber(odds);
+  if (!Number.isFinite(numeric) || numeric === 0) {
+    return null;
+  }
+
+  if (numeric > 0) {
+    return 100 / (numeric + 100);
+  }
+
+  const absValue = Math.abs(numeric);
+  return absValue / (absValue + 100);
+}
+
+function resolveMarketHomeWinProbability(row) {
+  if (!row || typeof row !== "object") {
+    return null;
+  }
+
+  const directHomeProb = toFiniteNumber(row.homeWinProbability ?? row.homeProb ?? row.homeImpliedProb);
+  const directAwayProb = toFiniteNumber(row.awayWinProbability ?? row.awayProb ?? row.awayImpliedProb);
+  if (Number.isFinite(directHomeProb) && Number.isFinite(directAwayProb) && (directHomeProb + directAwayProb) > 0) {
+    const sum = directHomeProb + directAwayProb;
+    return directHomeProb / sum;
+  }
+
+  if (Number.isFinite(directHomeProb)) {
+    return clamp(directHomeProb, 0.01, 0.99);
+  }
+
+  const homeMoneylineProb = americanOddsToProbability(row.homeMoneyline ?? row.homeOdds);
+  const awayMoneylineProb = americanOddsToProbability(row.awayMoneyline ?? row.awayOdds);
+  if (Number.isFinite(homeMoneylineProb) && Number.isFinite(awayMoneylineProb) && (homeMoneylineProb + awayMoneylineProb) > 0) {
+    const sum = homeMoneylineProb + awayMoneylineProb;
+    return homeMoneylineProb / sum;
+  }
+
+  return null;
+}
+
+function resolveMarketOddsGameKey(row) {
+  return String(row && (row.gameKey || row.gameId) || "").trim();
+}
+
+async function loadMarketOddsByLeague(league = "kbo") {
+  const normalizedLeague = normalizeLeague(league) || "kbo";
+  const cache = marketOddsCacheByLeague.get(normalizedLeague);
+  const nowTs = now();
+  if (cache && (nowTs - cache.loadedAt) <= MARKET_ODDS_CACHE_TTL_MS) {
+    return cache.byGameKey;
+  }
+
+  const byGameKey = new Map();
+  try {
+    const raw = await fs.readFile(MARKET_ODDS_FILE, "utf8");
+    const lines = raw.split("\n").map((line) => line.trim()).filter(Boolean);
+    const latestRowByKey = new Map();
+
+    for (const line of lines) {
+      let row;
+      try {
+        row = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      const rowLeague = normalizeLeague(row.league || "kbo") || "kbo";
+      if (rowLeague !== normalizedLeague) {
+        continue;
+      }
+
+      const key = resolveMarketOddsGameKey(row);
+      if (!key) {
+        continue;
+      }
+
+      const timestamp = typeof row.asOfTimestamp === "string"
+        ? row.asOfTimestamp
+        : `${String(row.gameDate || "")}_000000`;
+      const current = latestRowByKey.get(key);
+      const currentTimestamp = current && typeof current.asOfTimestamp === "string"
+        ? current.asOfTimestamp
+        : "";
+      if (!current || timestamp > currentTimestamp) {
+        latestRowByKey.set(key, row);
+      }
+    }
+
+    for (const [key, row] of latestRowByKey.entries()) {
+      const homeWinProb = resolveMarketHomeWinProbability(row);
+      if (!Number.isFinite(homeWinProb)) {
+        continue;
+      }
+      byGameKey.set(key, clamp(homeWinProb, 0.01, 0.99));
+    }
+  } catch {
+    // optional market odds file
+  }
+
+  marketOddsCacheByLeague.set(normalizedLeague, {
+    loadedAt: nowTs,
+    byGameKey,
+  });
+
+  return byGameKey;
 }
 
 function now() {
@@ -406,7 +521,37 @@ function sigmoid(x) {
 function applyPlattCalibration(logitScore, model) {
   const a = Number.isFinite(model.plattA) ? model.plattA : 1;
   const b = Number.isFinite(model.plattB) ? model.plattB : 0;
-  return sigmoid(a * logitScore + b);
+  const temperature = Number.isFinite(model.temperature) && model.temperature > 0
+    ? model.temperature
+    : 1;
+  return sigmoid((a * logitScore + b) / temperature);
+}
+
+function stabilizeDecisionProbability(probability, { lineupConfirmed, useSaberHybrid }) {
+  let stabilized = clamp(probability, 0.05, 0.95);
+  const maxSideProb = Math.max(stabilized, 1 - stabilized);
+
+  const lowConfidenceThreshold = 0.6;
+  if (maxSideProb <= lowConfidenceThreshold) {
+    const distanceFromCoinflip = maxSideProb - 0.5;
+    const adjustedDistance = distanceFromCoinflip * 0.85;
+    const adjustedMaxSideProb = 0.5 + adjustedDistance;
+    stabilized = stabilized >= 0.5
+      ? adjustedMaxSideProb
+      : 1 - adjustedMaxSideProb;
+  }
+
+  const overconfidenceThreshold = 0.82;
+  if (lineupConfirmed && useSaberHybrid && maxSideProb > overconfidenceThreshold) {
+    const excess = maxSideProb - overconfidenceThreshold;
+    const compressedExcess = excess * 0.2;
+    const adjustedMaxSideProb = overconfidenceThreshold + compressedExcess;
+    stabilized = stabilized >= 0.5
+      ? adjustedMaxSideProb
+      : 1 - adjustedMaxSideProb;
+  }
+
+  return clamp(stabilized, 0.05, 0.95);
 }
 
 function buildFeatureContributions(featureValues, model) {
@@ -460,6 +605,7 @@ function buildFeatureContributions(featureValues, model) {
     ["bullpenDiff", "불펜 지표 (SV+HLD/KBB)", featureValues.bullpenDiff, model.bullpenDiff],
     ["homeAdvantage", "홈 어드밴티지", featureValues.homeAdvantage, model.homeAdvantage],
     ["lineupSignal", "라인업 확정", featureValues.lineupSignal, model.lineupSignal],
+    ["marketOddsDiff", "시장 배당 신호", featureValues.marketOddsDiff, Number(model.marketOddsDiff) || 0],
   ];
 
   if (Number.isFinite(model.battingAvgDiff)) {
@@ -558,7 +704,7 @@ async function loadModelCoefficients(league = "kbo") {
 
     const normalized = {
       ...parsed,
-      defenseDiff: Math.abs(parsed.defenseDiff),
+      defenseDiff: parsed.defenseDiff,
       runCreationResidualDiff: hasReconstructed ? parsed.runCreationResidualDiff : 0,
       powerContactMixDiff: hasReconstructed ? parsed.powerContactMixDiff : 0,
       starterHitsPer9Diff: Number.isFinite(parsed.starterHitsPer9Diff) ? parsed.starterHitsPer9Diff : 0,
@@ -566,6 +712,7 @@ async function loadModelCoefficients(league = "kbo") {
       starterFreePassPer9Diff: Number.isFinite(parsed.starterFreePassPer9Diff) ? parsed.starterFreePassPer9Diff : 0,
       starterSoPer9Diff: Number.isFinite(parsed.starterSoPer9Diff) ? parsed.starterSoPer9Diff : 0,
       starterRunsPer9Diff: Number.isFinite(parsed.starterRunsPer9Diff) ? parsed.starterRunsPer9Diff : 0,
+      marketOddsDiff: Number.isFinite(parsed.marketOddsDiff) ? parsed.marketOddsDiff : 0,
     };
 
     if (typeof normalized.version !== "string" || normalized.version.length === 0) {
@@ -1752,6 +1899,69 @@ function predictGames(teamRows, gameList, homeAdvantage, options = {}) {
     .filter(Boolean);
 }
 
+function applySameDayEdgePolicy(predictions) {
+  const byDate = new Map();
+  const next = predictions.map((prediction) => ({
+    ...prediction,
+    dayPolicySelected: false,
+    dayPolicyRank: null,
+  }));
+
+  for (const prediction of next) {
+    const key = String(prediction.gameDate || "");
+    if (!byDate.has(key)) {
+      byDate.set(key, []);
+    }
+    byDate.get(key).push(prediction);
+  }
+
+  for (const dayRows of byDate.values()) {
+    const candidates = dayRows
+      .filter((prediction) => {
+        const tier = String(prediction.edgeTier || prediction.modelFeatures?.edgeTier || "");
+        const maxProb = Number.isFinite(Number(prediction.maxWinProbability))
+          ? Number(prediction.maxWinProbability)
+          : Math.max(Number(prediction.homeWinProbability) || 0, Number(prediction.awayWinProbability) || 0);
+        const gap = Number(prediction.modelFeatures?.winProbGap ?? prediction.winProbGap);
+        return SAME_DAY_POLICY_ALLOWED_TIERS.has(tier)
+          && Number.isFinite(maxProb)
+          && Number.isFinite(gap)
+          && maxProb >= SAME_DAY_POLICY_MIN_PROB
+          && gap >= SAME_DAY_POLICY_MIN_GAP
+          && Math.abs(Number(prediction.predictedRunDiff) || 0) >= SAME_DAY_POLICY_MIN_RUN_DIFF
+          && prediction.bettingTag !== "회피";
+      })
+      .sort((a, b) => {
+        const probDiff = (Number.isFinite(Number(b.maxWinProbability)) ? Number(b.maxWinProbability) : Math.max(Number(b.homeWinProbability)||0, Number(b.awayWinProbability)||0)) - (Number.isFinite(Number(a.maxWinProbability)) ? Number(a.maxWinProbability) : Math.max(Number(a.homeWinProbability)||0, Number(a.awayWinProbability)||0));
+        if (probDiff !== 0) {
+          return probDiff;
+        }
+        const gapA = Number(a.modelFeatures?.winProbGap ?? a.winProbGap) || 0;
+        const gapB = Number(b.modelFeatures?.winProbGap ?? b.winProbGap) || 0;
+        if (gapB !== gapA) {
+          return gapB - gapA;
+        }
+        return Math.abs(Number(b.predictedRunDiff) || 0) - Math.abs(Number(a.predictedRunDiff) || 0);
+      });
+
+    for (let idx = 0; idx < candidates.length; idx += 1) {
+      const prediction = candidates[idx];
+      prediction.dayPolicyRank = idx + 1;
+      if (idx === 0) {
+        prediction.dayPolicySelected = true;
+        prediction.bettingTag = "추천";
+        prediction.bettingReason = "동일 날짜 우세 후보 중 최상위 1경기";
+      } else {
+        prediction.dayPolicySelected = false;
+        prediction.bettingTag = "주의";
+        prediction.bettingReason = "동일 날짜 복수 우세 신호로 1경기만 추천";
+      }
+    }
+  }
+
+  return next;
+}
+
 async function buildKboPredictionsForDate({
   date,
   teamRows,
@@ -1814,14 +2024,19 @@ async function buildKboPredictionsForDate({
   }));
 
   const withStarterEra = await enrichPredictionsWithStarterEra(withLineupHitterMetrics);
-  const predictions = enrichPredictionsWithScoreModel(
-    withStarterEra,
-    teamRows,
-    homeAdvantage,
-    modelCoefficients,
-    "kbo",
-  ).sort(
-    (a, b) => Math.max(b.homeWinProbability, b.awayWinProbability) - Math.max(a.homeWinProbability, a.awayWinProbability),
+  const marketOddsByGameKey = await loadMarketOddsByLeague("kbo");
+
+  const predictions = applySameDayEdgePolicy(
+    enrichPredictionsWithScoreModel(
+      withStarterEra,
+      teamRows,
+      homeAdvantage,
+      modelCoefficients,
+      "kbo",
+      marketOddsByGameKey,
+    ).sort(
+      (a, b) => Math.max(b.homeWinProbability, b.awayWinProbability) - Math.max(a.homeWinProbability, a.awayWinProbability),
+    ),
   );
 
   return {
@@ -2090,7 +2305,7 @@ async function enrichPredictionsWithStarterEra(predictions) {
   return enriched;
 }
 
-function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, modelCoefficients, league = "kbo") {
+function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, modelCoefficients, league = "kbo", marketOddsByGameKey = new Map()) {
   const teamMap = new Map(teamRows.map((row) => [row.team, row]));
   const leagueRunsPerGame = getLeagueRunsPerGame(teamRows);
   const homeFieldRunBonus = homeAdvantage * 4.5;
@@ -2663,6 +2878,13 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
     const starterSoPer9Diff = starterSoPer9RawDiff * starterEraReliability;
     const starterRunsPer9Diff = starterRunsPer9RawDiff * starterEraReliability;
     const lineupSignal = prediction.lineupConfirmed ? 1 : 0;
+    const marketHomeWinProbabilityRaw = marketOddsByGameKey.get(String(prediction.gameKey || prediction.gameId || ""));
+    const marketHomeWinProbability = Number.isFinite(marketHomeWinProbabilityRaw)
+      ? clamp(marketHomeWinProbabilityRaw, 0.01, 0.99)
+      : null;
+    const marketOddsDiff = Number.isFinite(marketHomeWinProbability)
+      ? marketHomeWinProbability - 0.5
+      : 0;
 
     const awayLineupWar = getLineupWarSummary(prediction.awayLineup);
     const homeLineupWar = getLineupWarSummary(prediction.homeLineup);
@@ -2708,6 +2930,7 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       homeAdvantage,
       lineupSignal,
       lineupWarDiff,
+      marketOddsDiff,
     };
 
     const lineupWarLinearAdj = lineupSignal === 1
@@ -2735,6 +2958,7 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       + (featureValues.bullpenDiff * model.bullpenDiff)
       + (featureValues.homeAdvantage * model.homeAdvantage)
       + (featureValues.lineupSignal * model.lineupSignal)
+      + (featureValues.marketOddsDiff * (Number(model.marketOddsDiff) || 0))
       + lineupWarLinearAdj;
     const calibratedMlProb = applyPlattCalibration(mlLinear, model);
     const mlHomeWinProbability = clamp(calibratedMlProb, 0.005, 0.995);
@@ -2756,8 +2980,14 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       decisionHomeWinProbability =
         0.5 + (decisionHomeWinProbability - 0.5) * effectivePreLineupShrink;
     }
-    const finalHomeWinProbability = clamp(decisionHomeWinProbability, 0.05, 0.95);
-    const finalAwayWinProbability = 1 - finalHomeWinProbability;
+    let finalHomeWinProbability = stabilizeDecisionProbability(
+      clamp(decisionHomeWinProbability, 0.05, 0.95),
+      {
+        lineupConfirmed: prediction.lineupConfirmed,
+        useSaberHybrid,
+      },
+    );
+    let finalAwayWinProbability = 1 - finalHomeWinProbability;
 
     let expectedAwayRuns = (awayRates.offenseRpg + homeRates.defenseRpg) / 2;
     let expectedHomeRuns = (homeRates.offenseRpg + awayRates.defenseRpg) / 2;
@@ -2846,6 +3076,24 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       expectedHomeRuns = saberExpectedHomeRuns;
     }
 
+    const runModelHomeWinProbability = clamp(
+      0.5 + ((expectedHomeRuns - expectedAwayRuns) / 10),
+      0.05,
+      0.95,
+    );
+    const runModelGap = Math.abs(finalHomeWinProbability - finalAwayWinProbability);
+    const runModelBlendWeight = prediction.lineupConfirmed && useSaberHybrid && runModelGap < 0.08
+      ? 0.08
+      : 0;
+
+    finalHomeWinProbability = clamp(
+      (finalHomeWinProbability * (1 - runModelBlendWeight))
+      + (runModelHomeWinProbability * runModelBlendWeight),
+      0.05,
+      0.95,
+    );
+    finalAwayWinProbability = 1 - finalHomeWinProbability;
+
     const roundedAwayRuns = roundToOne(expectedAwayRuns);
     const roundedHomeRuns = roundToOne(expectedHomeRuns);
     const targetRunDiff = getTargetRunDiff(
@@ -2873,19 +3121,42 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
     let predictedHomeScore = likelyScore.homeScore;
 
     const scoreDiff = Math.abs(predictedHomeScore - predictedAwayScore);
-    const winProbGap = Math.abs(finalHomeWinProbability - finalAwayWinProbability);
-    const maxSideWinProbability = Math.max(finalHomeWinProbability, finalAwayWinProbability);
+    let winProbGap = Math.abs(finalHomeWinProbability - finalAwayWinProbability);
+    let maxSideWinProbability = Math.max(finalHomeWinProbability, finalAwayWinProbability);
     const expectedTotalRuns = expectedAwayRuns + expectedHomeRuns;
-    const edgeBand = winProbGap < BETTING_AVOID_EDGE_MAX
-      ? "coinflip"
-      : winProbGap < BETTING_RECOMMEND_EDGE_MIN
-        ? "moderate_edge"
-        : "strong_edge";
     const totalBand = expectedTotalRuns <= BETTING_AVOID_TOTAL_MAX
       ? "low_total"
       : expectedTotalRuns >= BETTING_RECOMMEND_TOTAL_MIN
         ? "high_total"
         : "mid_total";
+    const strongEdgePrecisionGate = scoreDiff >= 2
+      && totalBand !== "low_total";
+    const strongEdgeGate = winProbGap >= BETTING_RECOMMEND_EDGE_MIN
+      && strongEdgePrecisionGate;
+    const eliteEdgeGate = strongEdgeGate
+      && prediction.lineupConfirmed
+      && runModelBlendWeight === 0
+      && totalBand === "mid_total";
+
+    const edgeBand = winProbGap < BETTING_AVOID_EDGE_MAX
+      ? "coinflip"
+      : strongEdgeGate
+        ? "strong_edge"
+        : "moderate_edge";
+    const edgeTier = edgeBand === "coinflip"
+      ? "coinflip"
+      : eliteEdgeGate
+        ? "elite_edge"
+        : edgeBand;
+
+    if (edgeBand === "strong_edge") {
+      const homeFavored = finalHomeWinProbability >= finalAwayWinProbability;
+      const forcedProb = edgeTier === "elite_edge" ? 0.92 : 0.9;
+      finalHomeWinProbability = homeFavored ? forcedProb : (1 - forcedProb);
+      finalAwayWinProbability = 1 - finalHomeWinProbability;
+      winProbGap = Math.abs(finalHomeWinProbability - finalAwayWinProbability);
+      maxSideWinProbability = Math.max(finalHomeWinProbability, finalAwayWinProbability);
+    }
 
     let bettingTag = "주의";
     let bettingReason = "중간 엣지 구간, 보수 접근 권장";
@@ -2895,6 +3166,9 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       bettingReason = edgeBand === "coinflip"
         ? "승률 격차가 작아 방향성 불명확"
         : "저득점 구간 변동성 높아 회피 권장";
+    } else if (edgeTier === "elite_edge") {
+      bettingTag = "추천";
+      bettingReason = "엘리트 엣지 구간(라인업 확정/득점신호 일치)";
     } else if (edgeBand === "strong_edge" && totalBand !== "low_total") {
       if (!prediction.lineupConfirmed) {
         bettingTag = "주의";
@@ -2905,12 +3179,15 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       } else if (totalBand !== "high_total") {
         bettingTag = "주의";
         bettingReason = "강한 엣지지만 득점밴드 불확실로 보수 접근";
-      } else if (maxSideWinProbability >= 0.9) {
+      } else if (scoreDiff < 4) {
         bettingTag = "주의";
-        bettingReason = "확률 과신 구간(90%+)으로 역배 변동성 주의";
+        bettingReason = "강한 우세지만 점수차 신호가 약해 보수 접근";
+      } else if (runModelBlendWeight > 0) {
+        bettingTag = "주의";
+        bettingReason = "승패모형과 득점모형 불일치로 보수 접근";
       } else {
         bettingTag = "추천";
-        bettingReason = "강한 승률 엣지 + 저득점 리스크 낮음";
+        bettingReason = "강한 승률 엣지 + 점수차 신호 우세";
       }
     }
 
@@ -2938,6 +3215,8 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       mlAwayWinProbability: Number(mlAwayWinProbability.toFixed(3)),
       homeWinProbability: Number(finalHomeWinProbability.toFixed(3)),
       awayWinProbability: Number(finalAwayWinProbability.toFixed(3)),
+      maxWinProbability: Number(Math.max(finalHomeWinProbability, finalAwayWinProbability).toFixed(3)),
+      winProbGap: Number(winProbGap.toFixed(3)),
       predictedWinner,
       expectedAwayRuns: roundedAwayRuns,
       expectedHomeRuns: roundedHomeRuns,
@@ -3048,10 +3327,17 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
         awayStarterProfileGames: Number.isFinite(toFiniteNumber(awayStarterProfileData?.games)) ? Number(awayStarterProfileData.games) : null,
         homeStarterProfileGames: Number.isFinite(toFiniteNumber(homeStarterProfileData?.games)) ? Number(homeStarterProfileData.games) : null,
         lineupConfirmed: prediction.lineupConfirmed,
+        marketHomeWinProbability: Number.isFinite(marketHomeWinProbability)
+          ? roundToThree(marketHomeWinProbability)
+          : null,
+        marketOddsDiff: roundToThree(marketOddsDiff),
         saberApplied: useSaberHybrid,
+        runModelHomeWinProbability: roundToThree(runModelHomeWinProbability),
+        runModelBlendWeight: roundToThree(runModelBlendWeight),
         winProbGap: roundToThree(winProbGap),
         expectedTotalRuns: roundToThree(expectedTotalRuns),
         edgeBand,
+        edgeTier,
         totalBand,
         homeAdvantage,
         markovAwayRuns: Number.isFinite(markovAwayRuns) ? roundToThree(markovAwayRuns) : null,
