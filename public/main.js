@@ -704,7 +704,7 @@ function renderDailyPredictions(payload) {
           <p class="starter-role">원정 선발</p>
           <p class="starter-name">${awayStarterName}</p>
           <p class="starter-era">ERA ${formatEra(game.awayStarterEra)}</p>
-          <p class="starter-metric">피안타/9 ${formatStarterMetric(modelFeatures.awayStarterHitsPer9, 2)}</p>
+          <p class="starter-metric">피안타율 AVG ${formatStarterMetric(modelFeatures.awayStarterAvgAllowed, 3)}</p>
           <p class="starter-metric">WHIP ${formatStarterMetric(modelFeatures.awayStarterWhip, 3)}</p>
           <p class="starter-metric">BB/9 ${formatStarterMetric(modelFeatures.awayStarterBbPer9, 2)}</p>
           <p class="starter-metric">K/BB ${formatStarterMetric(awayStarterKbb, 2)}</p>
@@ -715,7 +715,7 @@ function renderDailyPredictions(payload) {
           <p class="starter-role">홈 선발</p>
           <p class="starter-name">${homeStarterName}</p>
           <p class="starter-era">ERA ${formatEra(game.homeStarterEra)}</p>
-          <p class="starter-metric">피안타/9 ${formatStarterMetric(modelFeatures.homeStarterHitsPer9, 2)}</p>
+          <p class="starter-metric">피안타율 AVG ${formatStarterMetric(modelFeatures.homeStarterAvgAllowed, 3)}</p>
           <p class="starter-metric">WHIP ${formatStarterMetric(modelFeatures.homeStarterWhip, 3)}</p>
           <p class="starter-metric">BB/9 ${formatStarterMetric(modelFeatures.homeStarterBbPer9, 2)}</p>
           <p class="starter-metric">K/BB ${formatStarterMetric(homeStarterKbb, 2)}</p>

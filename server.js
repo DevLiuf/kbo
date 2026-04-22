@@ -1440,6 +1440,7 @@ function parseKboPitcherDetailProfile(html, playerId) {
   const games = toFiniteNumber(seasonA.get("G"));
   const era = toFiniteNumber(seasonA.get("ERA"));
   const whip = toFiniteNumber(seasonB.get("WHIP"));
+  const avgAllowed = toFiniteNumber(seasonB.get("AVG") || seasonA.get("AVG"));
   const qs = toFiniteNumber(seasonB.get("QS"));
   const hitByPitch = Number.isFinite(gameLogHbp) ? gameLogHbp : 0;
 
@@ -1456,6 +1457,7 @@ function parseKboPitcherDetailProfile(html, playerId) {
     strikeouts,
     runsAllowed,
     whip,
+    avgAllowed,
     qs,
     hitsPer9: perNine(hits, inningsOuts),
     hrPer9: perNine(homeRuns, inningsOuts),
@@ -1495,6 +1497,45 @@ async function loadKboPitcherDetailById(playerId) {
   }
 }
 
+function hasStarterObpMetric(profile) {
+  if (!profile) {
+    return false;
+  }
+
+  return Number.isFinite(toFiniteNumber(profile.obpAllowed))
+    || Number.isFinite(toFiniteNumber(profile.opponentObp))
+    || Number.isFinite(toFiniteNumber(profile.oppObp))
+    || Number.isFinite(toFiniteNumber(profile.obp));
+}
+
+function mergeStarterProfiles(baseProfile, detailProfile) {
+  if (!baseProfile && !detailProfile) {
+    return null;
+  }
+  if (!baseProfile) {
+    return detailProfile;
+  }
+  if (!detailProfile) {
+    return baseProfile;
+  }
+
+  return {
+    ...detailProfile,
+    ...baseProfile,
+    obpAllowed: Number.isFinite(toFiniteNumber(baseProfile.obpAllowed))
+      ? toFiniteNumber(baseProfile.obpAllowed)
+      : Number.isFinite(toFiniteNumber(detailProfile.obpAllowed))
+        ? toFiniteNumber(detailProfile.obpAllowed)
+        : Number.isFinite(toFiniteNumber(detailProfile.opponentObp))
+          ? toFiniteNumber(detailProfile.opponentObp)
+          : Number.isFinite(toFiniteNumber(detailProfile.oppObp))
+            ? toFiniteNumber(detailProfile.oppObp)
+            : Number.isFinite(toFiniteNumber(detailProfile.obp))
+              ? toFiniteNumber(detailProfile.obp)
+              : null,
+  };
+}
+
 async function attachStarterPitcherProfiles(prediction, pitcherMap) {
   const byId = pitcherMap?.byPlayerId instanceof Map ? pitcherMap.byPlayerId : new Map();
   const byTeamName = pitcherMap?.byTeamName instanceof Map ? pitcherMap.byTeamName : new Map();
@@ -1508,12 +1549,21 @@ async function attachStarterPitcherProfiles(prediction, pitcherMap) {
   let awayProfile = awayById || awayByName || null;
   let homeProfile = homeById || homeByName || null;
 
-  if (!awayProfile && prediction.awayPitcherId) {
-    awayProfile = await loadKboPitcherDetailById(prediction.awayPitcherId);
+  const awayDetailId = prediction.awayPitcherId || awayProfile?.playerId;
+  const homeDetailId = prediction.homePitcherId || homeProfile?.playerId;
+
+  if (awayDetailId && !hasStarterObpMetric(awayProfile)) {
+    const awayDetail = await loadKboPitcherDetailById(awayDetailId);
+    awayProfile = mergeStarterProfiles(awayProfile, awayDetail);
+  } else if (!awayProfile && awayDetailId) {
+    awayProfile = await loadKboPitcherDetailById(awayDetailId);
   }
 
-  if (!homeProfile && prediction.homePitcherId) {
-    homeProfile = await loadKboPitcherDetailById(prediction.homePitcherId);
+  if (homeDetailId && !hasStarterObpMetric(homeProfile)) {
+    const homeDetail = await loadKboPitcherDetailById(homeDetailId);
+    homeProfile = mergeStarterProfiles(homeProfile, homeDetail);
+  } else if (!homeProfile && homeDetailId) {
+    homeProfile = await loadKboPitcherDetailById(homeDetailId);
   }
 
   return {
@@ -3293,6 +3343,12 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
         homeStarterWhip: Number.isFinite(prediction.homeStarterWhip)
           ? roundToThree(prediction.homeStarterWhip)
           : (Number.isFinite(homeStarterProfileData?.whip) ? roundToThree(homeStarterProfileData.whip) : null),
+        awayStarterAvgAllowed: Number.isFinite(toFiniteNumber(awayStarterProfileData?.avgAllowed ?? awayStarterProfileData?.opponentAvg ?? awayStarterProfileData?.oppAvg ?? awayStarterProfileData?.avg))
+          ? roundToThree(toFiniteNumber(awayStarterProfileData?.avgAllowed ?? awayStarterProfileData?.opponentAvg ?? awayStarterProfileData?.oppAvg ?? awayStarterProfileData?.avg))
+          : null,
+        homeStarterAvgAllowed: Number.isFinite(toFiniteNumber(homeStarterProfileData?.avgAllowed ?? homeStarterProfileData?.opponentAvg ?? homeStarterProfileData?.oppAvg ?? homeStarterProfileData?.avg))
+          ? roundToThree(toFiniteNumber(homeStarterProfileData?.avgAllowed ?? homeStarterProfileData?.opponentAvg ?? homeStarterProfileData?.oppAvg ?? homeStarterProfileData?.avg))
+          : null,
         awayStarterHitsPer9: Number.isFinite(awayHitsPer9) ? roundToThree(awayHitsPer9) : null,
         homeStarterHitsPer9: Number.isFinite(homeHitsPer9) ? roundToThree(homeHitsPer9) : null,
         awayStarterHrPer9: Number.isFinite(awayHrPer9) ? roundToThree(awayHrPer9) : null,
