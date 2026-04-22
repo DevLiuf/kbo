@@ -2,6 +2,7 @@ const path = require("path");
 const fs = require("fs/promises");
 const express = require("express");
 const cheerio = require("cheerio");
+const { version: APP_VERSION } = require("./package.json");
 
 const {
   DEFAULT_EXPONENT,
@@ -3318,6 +3319,12 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
         homeStarterRunsAllowed: Number.isFinite(toFiniteNumber(homeStarterProfileData?.runsAllowed)) ? Number(homeStarterProfileData.runsAllowed) : null,
         awayStarterProfileGames: Number.isFinite(toFiniteNumber(awayStarterProfileData?.games)) ? Number(awayStarterProfileData.games) : null,
         homeStarterProfileGames: Number.isFinite(toFiniteNumber(homeStarterProfileData?.games)) ? Number(homeStarterProfileData.games) : null,
+        awayStarterObpAllowed: Number.isFinite(toFiniteNumber(awayStarterProfileData?.obpAllowed ?? awayStarterProfileData?.opponentObp ?? awayStarterProfileData?.oppObp ?? awayStarterProfileData?.obp))
+          ? roundToThree(toFiniteNumber(awayStarterProfileData?.obpAllowed ?? awayStarterProfileData?.opponentObp ?? awayStarterProfileData?.oppObp ?? awayStarterProfileData?.obp))
+          : null,
+        homeStarterObpAllowed: Number.isFinite(toFiniteNumber(homeStarterProfileData?.obpAllowed ?? homeStarterProfileData?.opponentObp ?? homeStarterProfileData?.oppObp ?? homeStarterProfileData?.obp))
+          ? roundToThree(toFiniteNumber(homeStarterProfileData?.obpAllowed ?? homeStarterProfileData?.opponentObp ?? homeStarterProfileData?.oppObp ?? homeStarterProfileData?.obp))
+          : null,
         lineupConfirmed: prediction.lineupConfirmed,
         marketHomeWinProbability: Number.isFinite(marketHomeWinProbability)
           ? roundToThree(marketHomeWinProbability)
@@ -3491,6 +3498,7 @@ app.get("/api/predictions/gameday", async (req, res) => {
     res.json({
       asOfTimestamp,
       league,
+      appVersion: APP_VERSION,
       modelVersion: modelCoefficients.version,
       modelTrainedAt: typeof modelCoefficients.trainedAt === "string" ? modelCoefficients.trainedAt : null,
       modelTrainingRange: modelCoefficients.trainingFromGameDate && modelCoefficients.trainingToGameDate

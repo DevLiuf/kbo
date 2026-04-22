@@ -88,6 +88,12 @@ body {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
 }
 
+.model-status-pill.app {
+  background: #4b3e2b;
+  border-color: #8f7249;
+  color: #ffefcf;
+}
+
 .model-status-pill.ml {
   background: #2f475f;
   border-color: #4c6f93;
@@ -388,6 +394,13 @@ body {
   margin: 0;
   font-size: 0.7rem;
   color: #cfdbf5;
+}
+
+.starter-metric {
+  margin: 0;
+  font-size: 0.62rem;
+  color: #b9c9ea;
+  line-height: 1.2;
 }
 
 .starter-vs {

@@ -108,6 +108,23 @@ function formatEra(era) {
   return era.toFixed(2);
 }
 
+function formatStarterMetric(value, digits = 2) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    return "-";
+  }
+  return n.toFixed(digits);
+}
+
+function calcStarterKbb(strikeouts, walks) {
+  const so = Number(strikeouts);
+  const bb = Number(walks);
+  if (!Number.isFinite(so) || !Number.isFinite(bb)) {
+    return null;
+  }
+  return (so + 1) / (bb + 1);
+}
+
 function getConfidence(diff, lineupConfirmed) {
   if (!lineupConfirmed) {
     if (diff >= 0.3) {
@@ -168,8 +185,10 @@ function renderModelStatus(payload) {
   const saberRange = payload?.saberTuningRange?.from && payload?.saberTuningRange?.to
     ? `${formatCompactDate(payload.saberTuningRange.from)}~${formatCompactDate(payload.saberTuningRange.to)}`
     : "-";
+  const appVersion = String(payload?.appVersion || "-").trim() || "-";
 
   modelStatusRow.innerHTML = `
+    <span class="model-status-pill app"><span class="model-status-label">웹 버전</span><span class="model-status-value">v${appVersion}</span></span>
     <span class="model-status-pill ml"><span class="model-status-label">ML 학습 경기일</span><span class="model-status-value">${mlLatest}</span><span class="model-status-range">(${mlRange})</span></span>
     <span class="model-status-pill saber"><span class="model-status-label">세이버 튜닝 경기일</span><span class="model-status-value">${saberRange}</span></span>
   `;
@@ -674,6 +693,10 @@ function renderDailyPredictions(payload) {
       hitBadge = '<span class="daily-hit-badge miss">예측 빗나감</span>';
     }
 
+    const modelFeatures = game.modelFeatures || {};
+    const awayStarterKbb = calcStarterKbb(modelFeatures.awayStarterStrikeouts, modelFeatures.awayStarterWalks);
+    const homeStarterKbb = calcStarterKbb(modelFeatures.homeStarterStrikeouts, modelFeatures.homeStarterWalks);
+
     const starterLine = showStarterLine
       ? `
       <div class="daily-starters-grid">
@@ -681,12 +704,22 @@ function renderDailyPredictions(payload) {
           <p class="starter-role">원정 선발</p>
           <p class="starter-name">${awayStarterName}</p>
           <p class="starter-era">ERA ${formatEra(game.awayStarterEra)}</p>
+          <p class="starter-metric">피안타/9 ${formatStarterMetric(modelFeatures.awayStarterHitsPer9, 2)}</p>
+          <p class="starter-metric">WHIP ${formatStarterMetric(modelFeatures.awayStarterWhip, 3)}</p>
+          <p class="starter-metric">BB/9 ${formatStarterMetric(modelFeatures.awayStarterBbPer9, 2)}</p>
+          <p class="starter-metric">K/BB ${formatStarterMetric(awayStarterKbb, 2)}</p>
+          <p class="starter-metric">OBP ${formatStarterMetric(modelFeatures.awayStarterObpAllowed, 3)}</p>
         </div>
         <div class="starter-vs">VS</div>
         <div class="starter-col right">
           <p class="starter-role">홈 선발</p>
           <p class="starter-name">${homeStarterName}</p>
           <p class="starter-era">ERA ${formatEra(game.homeStarterEra)}</p>
+          <p class="starter-metric">피안타/9 ${formatStarterMetric(modelFeatures.homeStarterHitsPer9, 2)}</p>
+          <p class="starter-metric">WHIP ${formatStarterMetric(modelFeatures.homeStarterWhip, 3)}</p>
+          <p class="starter-metric">BB/9 ${formatStarterMetric(modelFeatures.homeStarterBbPer9, 2)}</p>
+          <p class="starter-metric">K/BB ${formatStarterMetric(homeStarterKbb, 2)}</p>
+          <p class="starter-metric">OBP ${formatStarterMetric(modelFeatures.homeStarterObpAllowed, 3)}</p>
         </div>
       </div>`
       : "";
