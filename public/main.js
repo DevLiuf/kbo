@@ -708,7 +708,6 @@ function renderDailyPredictions(payload) {
           <p class="starter-metric">WHIP ${formatStarterMetric(modelFeatures.awayStarterWhip, 3)}</p>
           <p class="starter-metric">BB/9 ${formatStarterMetric(modelFeatures.awayStarterBbPer9, 2)}</p>
           <p class="starter-metric">K/BB ${formatStarterMetric(awayStarterKbb, 2)}</p>
-          <p class="starter-metric">OBP ${formatStarterMetric(modelFeatures.awayStarterObpAllowed, 3)}</p>
         </div>
         <div class="starter-vs">VS</div>
         <div class="starter-col right">
@@ -719,7 +718,6 @@ function renderDailyPredictions(payload) {
           <p class="starter-metric">WHIP ${formatStarterMetric(modelFeatures.homeStarterWhip, 3)}</p>
           <p class="starter-metric">BB/9 ${formatStarterMetric(modelFeatures.homeStarterBbPer9, 2)}</p>
           <p class="starter-metric">K/BB ${formatStarterMetric(homeStarterKbb, 2)}</p>
-          <p class="starter-metric">OBP ${formatStarterMetric(modelFeatures.homeStarterObpAllowed, 3)}</p>
         </div>
       </div>`
       : "";
