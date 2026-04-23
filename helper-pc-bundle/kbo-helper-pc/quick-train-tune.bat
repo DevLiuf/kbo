@@ -20,7 +20,7 @@ if not defined NODE_EXE (
   echo 2^) Reopen CMD and check: node -v
   echo 3^) Run this file again.
   echo.
-  pause
+  if /I "%KBO_HELPER_PAUSE%"=="1" pause
   exit /b 1
 )
 
@@ -50,11 +50,11 @@ popd >nul
 if not "%RUN_EXIT%"=="0" (
   echo.
   echo [kbo-helper-pc] FAILED. Check logs above.
-  pause
+  if /I "%KBO_HELPER_PAUSE%"=="1" pause
   exit /b %RUN_EXIT%
 )
 
 echo.
 echo [kbo-helper-pc] DONE.
-pause
+if /I "%KBO_HELPER_PAUSE%"=="1" pause
 exit /b 0

@@ -137,9 +137,21 @@ function autoCommitAndPush(commitMessage) {
     throw new Error("autoPush failed: git commit");
   }
 
-  const pushResult = runCommand("git", ["push"], { stdio: "inherit" });
+  const branchResult = runCommand("git", ["branch", "--show-current"]);
+  const currentBranch = String(branchResult.stdout || "").trim() || "main";
+
+  let pushResult = runCommand("git", ["push"], { stdio: "inherit" });
   if (pushResult.status !== 0) {
-    throw new Error("autoPush failed: git push");
+    console.warn("[helper-pc] push rejected, attempting pull --rebase then retry push");
+    const rebaseResult = runCommand("git", ["pull", "--rebase", "origin", currentBranch], { stdio: "inherit" });
+    if (rebaseResult.status !== 0) {
+      throw new Error("autoPush failed: git pull --rebase");
+    }
+
+    pushResult = runCommand("git", ["push"], { stdio: "inherit" });
+    if (pushResult.status !== 0) {
+      throw new Error("autoPush failed: git push after rebase");
+    }
   }
 
   return {
