@@ -706,6 +706,7 @@ function renderDailyPredictions(payload) {
           <p class="starter-era">ERA ${formatEra(game.awayStarterEra)}</p>
           <p class="starter-metric">피안타율 AVG ${formatStarterMetric(modelFeatures.awayStarterAvgAllowed, 3)}</p>
           <p class="starter-metric">WHIP ${formatStarterMetric(modelFeatures.awayStarterWhip, 3)}</p>
+          <p class="starter-metric">K/9 ${formatStarterMetric(modelFeatures.awayStarterSoPer9, 2)}</p>
           <p class="starter-metric">BB/9 ${formatStarterMetric(modelFeatures.awayStarterBbPer9, 2)}</p>
           <p class="starter-metric">K/BB ${formatStarterMetric(awayStarterKbb, 2)}</p>
         </div>
@@ -716,6 +717,7 @@ function renderDailyPredictions(payload) {
           <p class="starter-era">ERA ${formatEra(game.homeStarterEra)}</p>
           <p class="starter-metric">피안타율 AVG ${formatStarterMetric(modelFeatures.homeStarterAvgAllowed, 3)}</p>
           <p class="starter-metric">WHIP ${formatStarterMetric(modelFeatures.homeStarterWhip, 3)}</p>
+          <p class="starter-metric">K/9 ${formatStarterMetric(modelFeatures.homeStarterSoPer9, 2)}</p>
           <p class="starter-metric">BB/9 ${formatStarterMetric(modelFeatures.homeStarterBbPer9, 2)}</p>
           <p class="starter-metric">K/BB ${formatStarterMetric(homeStarterKbb, 2)}</p>
         </div>
