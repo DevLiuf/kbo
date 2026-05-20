@@ -126,6 +126,24 @@ function toFiniteNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function toFiniteRateNumber(value, min = 0.05, max = 0.7) {
+  const parsed = toFiniteNumber(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return parsed >= min && parsed <= max ? parsed : null;
+}
+
+function firstFiniteNumber(...values) {
+  for (const value of values) {
+    const parsed = toFiniteNumber(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
 function americanOddsToProbability(odds) {
   const numeric = toFiniteNumber(odds);
   if (!Number.isFinite(numeric) || numeric === 0) {
@@ -795,7 +813,10 @@ async function fetchKboJson(url, payload) {
     signal,
     headers: {
       "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-      "User-Agent": "Mozilla/5.0 (compatible; kbo-pythagorean-demo/1.0)",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+      Accept: "application/json, text/javascript, */*; q=0.01",
+      "X-Requested-With": "XMLHttpRequest",
+      Referer: "https://www.koreabaseball.com/Schedule/GameCenter/Main.aspx",
     },
     body: new URLSearchParams(payload).toString(),
   });
@@ -804,7 +825,12 @@ async function fetchKboJson(url, payload) {
     throw new Error(`Failed to fetch ${url}: ${response.status}`);
   }
 
-  return response.json();
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`KBO JSON parse failed for ${url}: ${text.slice(0, 80)}`);
+  }
 }
 
 function parseHitterRuns(html) {
@@ -1371,6 +1397,83 @@ async function loadKboPlayerPitcherBasicMap() {
   }
 }
 
+function parseKboPitcherDetail2Profile(html, playerId, options = {}) {
+  const $ = cheerio.load(html);
+  const tables = $("table").toArray();
+  const normalizedId = String(playerId || "").trim();
+  const targetNameKey = normalizePlayerNameKey(options.starterName || options.playerName || "");
+  const targetTeam = String(options.team || "").trim();
+
+  const parseRowByIndex = (rowNode) => {
+    const cells = $(rowNode).find("td");
+    if (!cells || cells.length < 13) {
+      return null;
+    }
+
+    const rowName = cells.eq(1).text().trim();
+    const rowTeam = cells.eq(2).text().trim();
+    const k9 = toFiniteNumber(cells.eq(7).text().trim());
+    const bb9 = toFiniteNumber(cells.eq(8).text().trim());
+    const kbb = toFiniteNumber(cells.eq(9).text().trim());
+    const obp = toFiniteRateNumber(cells.eq(10).text().trim());
+
+    return {
+      rowName,
+      rowTeam,
+      soPer9: k9,
+      bbPer9: bb9,
+      kbbRatio: kbb,
+      obpAllowed: obp,
+    };
+  };
+
+  let selected = null;
+  for (const tableNode of tables) {
+    const rows = $(tableNode).find("tbody tr").toArray();
+
+    // 1) strict playerId match when link is available
+    for (const rowNode of rows) {
+      const playerLink = $(rowNode).find("a[href*='playerId=']").first().attr("href") || "";
+      if (normalizedId && playerLink.includes(`playerId=${normalizedId}`)) {
+        selected = parseRowByIndex(rowNode);
+        break;
+      }
+    }
+
+    // 2) fallback by starter name (+team)
+    if (!selected && targetNameKey) {
+      for (const rowNode of rows) {
+        const parsed = parseRowByIndex(rowNode);
+        if (!parsed) {
+          continue;
+        }
+        const rowNameKey = normalizePlayerNameKey(parsed.rowName);
+        const teamMatch = !targetTeam || !parsed.rowTeam || targetTeam === parsed.rowTeam;
+        if (rowNameKey && rowNameKey === targetNameKey && teamMatch) {
+          selected = parsed;
+          break;
+        }
+      }
+    }
+
+    if (selected) {
+      break;
+    }
+  }
+
+  if (!selected) {
+    return null;
+  }
+
+  return {
+    playerId: normalizedId,
+    soPer9: selected.soPer9,
+    bbPer9: selected.bbPer9,
+    kbbRatio: selected.kbbRatio,
+    obpAllowed: selected.obpAllowed,
+  };
+}
+
 function parseKboPitcherDetailProfile(html, playerId) {
   const $ = cheerio.load(html);
   const tables = $("table").toArray();
@@ -1472,7 +1575,7 @@ function parseKboPitcherDetailProfile(html, playerId) {
   };
 }
 
-async function loadKboPitcherDetailById(playerId) {
+async function loadKboPitcherDetailById(playerId, options = {}) {
   const normalizedId = String(playerId || "").trim();
   if (!normalizedId) {
     return null;
@@ -1484,9 +1587,19 @@ async function loadKboPitcherDetailById(playerId) {
   }
 
   try {
-    const detailUrl = `https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=${encodeURIComponent(normalizedId)}`;
-    const html = await fetchHtml(detailUrl);
-    const value = parseKboPitcherDetailProfile(html, normalizedId);
+    const basicUrl = `https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=${encodeURIComponent(normalizedId)}`;
+    const detail2Url = `https://www.koreabaseball.com/Record/Player/PitcherBasic/Detail2.aspx?playerId=${encodeURIComponent(normalizedId)}`;
+
+    const [basicHtml, detail2Html] = await Promise.all([
+      fetchHtml(basicUrl).catch(() => null),
+      fetchHtml(detail2Url).catch(() => null),
+    ]);
+
+    const basicValue = basicHtml ? parseKboPitcherDetailProfile(basicHtml, normalizedId) : null;
+    const detail2Value = detail2Html ? parseKboPitcherDetail2Profile(detail2Html, normalizedId, options) : null;
+
+    const value = mergeStarterProfiles(basicValue, detail2Value);
+
     KBO_PITCHER_DETAIL_CACHE.set(normalizedId, {
       fetchedAt: Date.now(),
       value,
@@ -1536,6 +1649,40 @@ function mergeStarterProfiles(baseProfile, detailProfile) {
   };
 }
 
+async function resolvePitcherPlayerIdBySearch(teamName, playerName) {
+  const normalizedName = normalizePlayerNameKey(playerName);
+  if (!normalizedName) {
+    return null;
+  }
+
+  const candidates = await searchKboPlayersByName(playerName);
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return null;
+  }
+
+  const teamId = resolveKboTeamId(teamName);
+  let pool = candidates.filter((player) => normalizePlayerNameKey(player?.P_NM) === normalizedName);
+  if (pool.length === 0) {
+    return null;
+  }
+
+  if (teamId) {
+    const byTeam = pool.filter((player) => String(player?.T_ID || "").trim() === teamId);
+    if (byTeam.length > 0) {
+      pool = byTeam;
+    }
+  }
+
+  const pitchers = pool.filter((player) => {
+    const pos = String(player?.POS_NO || "").trim();
+    const posText = String(player?.POS_NM || player?.POS_TXT || "").trim();
+    return pos === "1" || posText === "투수";
+  });
+  const selected = pitchers[0] || pool[0];
+  const pid = String(selected?.P_ID || "").trim();
+  return pid || null;
+}
+
 async function attachStarterPitcherProfiles(prediction, pitcherMap) {
   const byId = pitcherMap?.byPlayerId instanceof Map ? pitcherMap.byPlayerId : new Map();
   const byTeamName = pitcherMap?.byTeamName instanceof Map ? pitcherMap.byTeamName : new Map();
@@ -1549,21 +1696,40 @@ async function attachStarterPitcherProfiles(prediction, pitcherMap) {
   let awayProfile = awayById || awayByName || null;
   let homeProfile = homeById || homeByName || null;
 
-  const awayDetailId = prediction.awayPitcherId || awayProfile?.playerId;
-  const homeDetailId = prediction.homePitcherId || homeProfile?.playerId;
+  const awaySearchPlayerId = (!prediction.awayPitcherId && !awayProfile?.playerId)
+    ? await resolvePitcherPlayerIdBySearch(prediction.awayTeam, prediction.awayStarter)
+    : null;
+  const homeSearchPlayerId = (!prediction.homePitcherId && !homeProfile?.playerId)
+    ? await resolvePitcherPlayerIdBySearch(prediction.homeTeam, prediction.homeStarter)
+    : null;
+
+  const awayDetailId = prediction.awayPitcherId || awayProfile?.playerId || awaySearchPlayerId;
+  const homeDetailId = prediction.homePitcherId || homeProfile?.playerId || homeSearchPlayerId;
 
   if (awayDetailId && !hasStarterObpMetric(awayProfile)) {
-    const awayDetail = await loadKboPitcherDetailById(awayDetailId);
+    const awayDetail = await loadKboPitcherDetailById(awayDetailId, {
+      starterName: prediction.awayStarter,
+      team: prediction.awayTeam,
+    });
     awayProfile = mergeStarterProfiles(awayProfile, awayDetail);
   } else if (!awayProfile && awayDetailId) {
-    awayProfile = await loadKboPitcherDetailById(awayDetailId);
+    awayProfile = await loadKboPitcherDetailById(awayDetailId, {
+      starterName: prediction.awayStarter,
+      team: prediction.awayTeam,
+    });
   }
 
   if (homeDetailId && !hasStarterObpMetric(homeProfile)) {
-    const homeDetail = await loadKboPitcherDetailById(homeDetailId);
+    const homeDetail = await loadKboPitcherDetailById(homeDetailId, {
+      starterName: prediction.homeStarter,
+      team: prediction.homeTeam,
+    });
     homeProfile = mergeStarterProfiles(homeProfile, homeDetail);
   } else if (!homeProfile && homeDetailId) {
-    homeProfile = await loadKboPitcherDetailById(homeDetailId);
+    homeProfile = await loadKboPitcherDetailById(homeDetailId, {
+      starterName: prediction.homeStarter,
+      team: prediction.homeTeam,
+    });
   }
 
   return {
@@ -1675,18 +1841,36 @@ async function loadTeamRowsByLeague(league, exponent) {
   return loadKboTeamRows(exponent);
 }
 
+function fallbackGameDatePayload(date) {
+  const normalized = /^\d{8}$/.test(String(date || ""))
+    ? String(date)
+    : formatDateYYYYMMDDInTimeZone(new Date(), "Asia/Seoul");
+  return {
+    code: "100",
+    NOW_G_DT: normalized,
+    NOW_G_DT_TEXT: `${normalized.slice(0, 4)}.${normalized.slice(4, 6)}.${normalized.slice(6, 8)}`,
+    BEFORE_G_DT: null,
+    AFTER_G_DT: null,
+  };
+}
+
 async function getGameDate(date) {
-  const result = await fetchKboJson(KBO_GAME_DATE_URL, {
-    leId: "1",
-    srId: KBO_SERIES_IDS,
-    date,
-  });
+  try {
+    const result = await fetchKboJson(KBO_GAME_DATE_URL, {
+      leId: "1",
+      srId: KBO_SERIES_IDS,
+      date,
+    });
 
-  if (!result || result.code !== "100" || !result.NOW_G_DT) {
-    throw new Error("Failed to load game date.");
+    if (!result || result.code !== "100" || !result.NOW_G_DT) {
+      throw new Error("Failed to load game date.");
+    }
+
+    return result;
+  } catch (error) {
+    console.warn(`[kbo] game date lookup failed, using requested date fallback: ${error.message}`);
+    return fallbackGameDatePayload(date);
   }
-
-  return result;
 }
 
 async function getGameList(date) {
@@ -2128,6 +2312,14 @@ function parseStarterMetrics(analysis) {
       homeStarterQs: null,
       awayStarterWar: null,
       homeStarterWar: null,
+      awayStarterK9: null,
+      homeStarterK9: null,
+      awayStarterBbPer9: null,
+      homeStarterBbPer9: null,
+      awayStarterKbb: null,
+      homeStarterKbb: null,
+      awayStarterObp: null,
+      homeStarterObp: null,
     };
   }
 
@@ -2143,6 +2335,14 @@ function parseStarterMetrics(analysis) {
   let homeStarterQs = null;
   let awayStarterWar = null;
   let homeStarterWar = null;
+  let awayStarterK9 = null;
+  let homeStarterK9 = null;
+  let awayStarterBbPer9 = null;
+  let homeStarterBbPer9 = null;
+  let awayStarterKbb = null;
+  let homeStarterKbb = null;
+  let awayStarterObp = null;
+  let homeStarterObp = null;
 
   for (const rowWrapper of analysis.rows) {
     if (!rowWrapper || !Array.isArray(rowWrapper.row)) {
@@ -2200,6 +2400,42 @@ function parseStarterMetrics(analysis) {
       if (className === "td_war_B" && cellValue !== null) {
         homeStarterWar = cellValue;
       }
+
+      if (/k9/i.test(className) && cellValue !== null) {
+        if (/_T$/i.test(className)) {
+          awayStarterK9 = cellValue;
+        }
+        if (/_B$/i.test(className)) {
+          homeStarterK9 = cellValue;
+        }
+      }
+
+      if (/bb9/i.test(className) && cellValue !== null) {
+        if (/_T$/i.test(className)) {
+          awayStarterBbPer9 = cellValue;
+        }
+        if (/_B$/i.test(className)) {
+          homeStarterBbPer9 = cellValue;
+        }
+      }
+
+      if (/kbb/i.test(className) && cellValue !== null) {
+        if (/_T$/i.test(className)) {
+          awayStarterKbb = cellValue;
+        }
+        if (/_B$/i.test(className)) {
+          homeStarterKbb = cellValue;
+        }
+      }
+
+      if (/obp/i.test(className) && cellValue !== null) {
+        if (/_T$/i.test(className)) {
+          awayStarterObp = cellValue;
+        }
+        if (/_B$/i.test(className)) {
+          homeStarterObp = cellValue;
+        }
+      }
     }
   }
 
@@ -2229,6 +2465,14 @@ function parseStarterMetrics(analysis) {
     homeStarterQs,
     awayStarterWar,
     homeStarterWar,
+    awayStarterK9,
+    homeStarterK9,
+    awayStarterBbPer9,
+    homeStarterBbPer9,
+    awayStarterKbb,
+    homeStarterKbb,
+    awayStarterObp,
+    homeStarterObp,
   };
 }
 
@@ -2247,6 +2491,14 @@ async function getStarterEraForGame(game) {
       homeStarterQs: null,
       awayStarterWar: null,
       homeStarterWar: null,
+      awayStarterK9: null,
+      homeStarterK9: null,
+      awayStarterBbPer9: null,
+      homeStarterBbPer9: null,
+      awayStarterKbb: null,
+      homeStarterKbb: null,
+      awayStarterObp: null,
+      homeStarterObp: null,
     };
   }
 
@@ -2264,6 +2516,14 @@ async function getStarterEraForGame(game) {
       homeStarterQs: null,
       awayStarterWar: null,
       homeStarterWar: null,
+      awayStarterK9: null,
+      homeStarterK9: null,
+      awayStarterBbPer9: null,
+      homeStarterBbPer9: null,
+      awayStarterKbb: null,
+      homeStarterKbb: null,
+      awayStarterObp: null,
+      homeStarterObp: null,
     };
   }
 
@@ -2329,6 +2589,14 @@ async function enrichPredictionsWithStarterEra(predictions) {
           homeStarterQs: starterEra.homeStarterQs,
           awayStarterWar: starterEra.awayStarterWar,
           homeStarterWar: starterEra.homeStarterWar,
+          awayStarterK9: starterEra.awayStarterK9,
+          homeStarterK9: starterEra.homeStarterK9,
+          awayStarterBbPer9: starterEra.awayStarterBbPer9,
+          homeStarterBbPer9: starterEra.homeStarterBbPer9,
+          awayStarterKbb: starterEra.awayStarterKbb,
+          homeStarterKbb: starterEra.homeStarterKbb,
+          awayStarterObp: starterEra.awayStarterObp,
+          homeStarterObp: starterEra.homeStarterObp,
         };
       } catch (error) {
         return {
@@ -2347,6 +2615,14 @@ async function enrichPredictionsWithStarterEra(predictions) {
           homeStarterQs: null,
           awayStarterWar: null,
           homeStarterWar: null,
+          awayStarterK9: null,
+          homeStarterK9: null,
+          awayStarterBbPer9: null,
+          homeStarterBbPer9: null,
+          awayStarterKbb: null,
+          homeStarterKbb: null,
+          awayStarterObp: null,
+          homeStarterObp: null,
         };
       }
     }),
@@ -2901,8 +3177,8 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
     const homeHrPer9 = toFiniteNumber(homeStarterProfileData?.hrPer9);
     const awayFreePassPer9 = toFiniteNumber(awayStarterProfileData?.freePassPer9);
     const homeFreePassPer9 = toFiniteNumber(homeStarterProfileData?.freePassPer9);
-    const awaySoPer9 = toFiniteNumber(awayStarterProfileData?.soPer9);
-    const homeSoPer9 = toFiniteNumber(homeStarterProfileData?.soPer9);
+    const awaySoPer9 = firstFiniteNumber(toFiniteNumber(awayStarterProfileData?.soPer9), toFiniteNumber(prediction.awayStarterK9));
+    const homeSoPer9 = firstFiniteNumber(toFiniteNumber(homeStarterProfileData?.soPer9), toFiniteNumber(prediction.homeStarterK9));
     const awayRunsPer9 = toFiniteNumber(awayStarterProfileData?.runsPer9);
     const homeRunsPer9 = toFiniteNumber(homeStarterProfileData?.runsPer9);
 
@@ -3343,18 +3619,18 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
         homeStarterWhip: Number.isFinite(prediction.homeStarterWhip)
           ? roundToThree(prediction.homeStarterWhip)
           : (Number.isFinite(homeStarterProfileData?.whip) ? roundToThree(homeStarterProfileData.whip) : null),
-        awayStarterAvgAllowed: Number.isFinite(toFiniteNumber(awayStarterProfileData?.avgAllowed ?? awayStarterProfileData?.opponentAvg ?? awayStarterProfileData?.oppAvg ?? awayStarterProfileData?.avg))
-          ? roundToThree(toFiniteNumber(awayStarterProfileData?.avgAllowed ?? awayStarterProfileData?.opponentAvg ?? awayStarterProfileData?.oppAvg ?? awayStarterProfileData?.avg))
+        awayStarterAvgAllowed: Number.isFinite(toFiniteRateNumber(awayStarterProfileData?.avgAllowed ?? awayStarterProfileData?.opponentAvg ?? awayStarterProfileData?.oppAvg ?? awayStarterProfileData?.avg))
+          ? roundToThree(toFiniteRateNumber(awayStarterProfileData?.avgAllowed ?? awayStarterProfileData?.opponentAvg ?? awayStarterProfileData?.oppAvg ?? awayStarterProfileData?.avg))
           : null,
-        homeStarterAvgAllowed: Number.isFinite(toFiniteNumber(homeStarterProfileData?.avgAllowed ?? homeStarterProfileData?.opponentAvg ?? homeStarterProfileData?.oppAvg ?? homeStarterProfileData?.avg))
-          ? roundToThree(toFiniteNumber(homeStarterProfileData?.avgAllowed ?? homeStarterProfileData?.opponentAvg ?? homeStarterProfileData?.oppAvg ?? homeStarterProfileData?.avg))
+        homeStarterAvgAllowed: Number.isFinite(toFiniteRateNumber(homeStarterProfileData?.avgAllowed ?? homeStarterProfileData?.opponentAvg ?? homeStarterProfileData?.oppAvg ?? homeStarterProfileData?.avg))
+          ? roundToThree(toFiniteRateNumber(homeStarterProfileData?.avgAllowed ?? homeStarterProfileData?.opponentAvg ?? homeStarterProfileData?.oppAvg ?? homeStarterProfileData?.avg))
           : null,
         awayStarterHitsPer9: Number.isFinite(awayHitsPer9) ? roundToThree(awayHitsPer9) : null,
         homeStarterHitsPer9: Number.isFinite(homeHitsPer9) ? roundToThree(homeHitsPer9) : null,
         awayStarterHrPer9: Number.isFinite(awayHrPer9) ? roundToThree(awayHrPer9) : null,
         homeStarterHrPer9: Number.isFinite(homeHrPer9) ? roundToThree(homeHrPer9) : null,
-        awayStarterBbPer9: Number.isFinite(toFiniteNumber(awayStarterProfileData?.bbPer9)) ? roundToThree(toFiniteNumber(awayStarterProfileData?.bbPer9)) : null,
-        homeStarterBbPer9: Number.isFinite(toFiniteNumber(homeStarterProfileData?.bbPer9)) ? roundToThree(toFiniteNumber(homeStarterProfileData?.bbPer9)) : null,
+        awayStarterBbPer9: Number.isFinite(firstFiniteNumber(toFiniteNumber(awayStarterProfileData?.bbPer9), toFiniteNumber(prediction.awayStarterBbPer9))) ? roundToThree(firstFiniteNumber(toFiniteNumber(awayStarterProfileData?.bbPer9), toFiniteNumber(prediction.awayStarterBbPer9))) : null,
+        homeStarterBbPer9: Number.isFinite(firstFiniteNumber(toFiniteNumber(homeStarterProfileData?.bbPer9), toFiniteNumber(prediction.homeStarterBbPer9))) ? roundToThree(firstFiniteNumber(toFiniteNumber(homeStarterProfileData?.bbPer9), toFiniteNumber(prediction.homeStarterBbPer9))) : null,
         awayStarterHbpPer9: Number.isFinite(toFiniteNumber(awayStarterProfileData?.hbpPer9)) ? roundToThree(toFiniteNumber(awayStarterProfileData?.hbpPer9)) : null,
         homeStarterHbpPer9: Number.isFinite(toFiniteNumber(homeStarterProfileData?.hbpPer9)) ? roundToThree(toFiniteNumber(homeStarterProfileData?.hbpPer9)) : null,
         awayStarterSoPer9: Number.isFinite(awaySoPer9) ? roundToThree(awaySoPer9) : null,
@@ -3375,11 +3651,11 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
         homeStarterRunsAllowed: Number.isFinite(toFiniteNumber(homeStarterProfileData?.runsAllowed)) ? Number(homeStarterProfileData.runsAllowed) : null,
         awayStarterProfileGames: Number.isFinite(toFiniteNumber(awayStarterProfileData?.games)) ? Number(awayStarterProfileData.games) : null,
         homeStarterProfileGames: Number.isFinite(toFiniteNumber(homeStarterProfileData?.games)) ? Number(homeStarterProfileData.games) : null,
-        awayStarterObpAllowed: Number.isFinite(toFiniteNumber(awayStarterProfileData?.obpAllowed ?? awayStarterProfileData?.opponentObp ?? awayStarterProfileData?.oppObp ?? awayStarterProfileData?.obp))
-          ? roundToThree(toFiniteNumber(awayStarterProfileData?.obpAllowed ?? awayStarterProfileData?.opponentObp ?? awayStarterProfileData?.oppObp ?? awayStarterProfileData?.obp))
+        awayStarterObpAllowed: Number.isFinite(toFiniteRateNumber(firstFiniteNumber(toFiniteNumber(awayStarterProfileData?.obpAllowed ?? awayStarterProfileData?.opponentObp ?? awayStarterProfileData?.oppObp ?? awayStarterProfileData?.obp), toFiniteNumber(prediction.awayStarterObp))))
+          ? roundToThree(toFiniteRateNumber(firstFiniteNumber(toFiniteNumber(awayStarterProfileData?.obpAllowed ?? awayStarterProfileData?.opponentObp ?? awayStarterProfileData?.oppObp ?? awayStarterProfileData?.obp), toFiniteNumber(prediction.awayStarterObp))))
           : null,
-        homeStarterObpAllowed: Number.isFinite(toFiniteNumber(homeStarterProfileData?.obpAllowed ?? homeStarterProfileData?.opponentObp ?? homeStarterProfileData?.oppObp ?? homeStarterProfileData?.obp))
-          ? roundToThree(toFiniteNumber(homeStarterProfileData?.obpAllowed ?? homeStarterProfileData?.opponentObp ?? homeStarterProfileData?.oppObp ?? homeStarterProfileData?.obp))
+        homeStarterObpAllowed: Number.isFinite(toFiniteRateNumber(firstFiniteNumber(toFiniteNumber(homeStarterProfileData?.obpAllowed ?? homeStarterProfileData?.opponentObp ?? homeStarterProfileData?.oppObp ?? homeStarterProfileData?.obp), toFiniteNumber(prediction.homeStarterObp))))
+          ? roundToThree(toFiniteRateNumber(firstFiniteNumber(toFiniteNumber(homeStarterProfileData?.obpAllowed ?? homeStarterProfileData?.opponentObp ?? homeStarterProfileData?.oppObp ?? homeStarterProfileData?.obp), toFiniteNumber(prediction.homeStarterObp))))
           : null,
         lineupConfirmed: prediction.lineupConfirmed,
         marketHomeWinProbability: Number.isFinite(marketHomeWinProbability)
