@@ -38,7 +38,10 @@ async function fetchKboDay(date) {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-      "User-Agent": "Mozilla/5.0 (compatible; kbo-ml-fetch/1.0)",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+      Accept: "application/json, text/javascript, */*; q=0.01",
+      "X-Requested-With": "XMLHttpRequest",
+      Referer: "https://www.koreabaseball.com/Schedule/GameCenter/Main.aspx",
     },
     body: new URLSearchParams({
       leId: "1",
@@ -51,7 +54,13 @@ async function fetchKboDay(date) {
     throw new Error(`failed ${date}: ${response.status}`);
   }
 
-  const json = await response.json();
+  const text = await response.text();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`KBO result JSON parse failed for ${date}: ${text.slice(0, 80)}`);
+  }
   return Array.isArray(json.game) ? json.game : [];
 }
 
