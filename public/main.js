@@ -5,6 +5,7 @@ const metricsSortHeaders = Array.from(document.querySelectorAll("#metricsTable t
 const refreshButton = document.getElementById("refreshButton");
 const dailyDateText = document.getElementById("dailyDateText");
 const dailyPredictionsList = document.getElementById("dailyPredictionsList");
+const dailySummaryList = document.getElementById("dailySummaryList");
 const modelStatusRow = document.getElementById("modelStatusRow");
 
 const FIXED_EXPONENT = 1.83;
@@ -72,10 +73,16 @@ async function downloadPredictionCardImage(cardElement, triggerButton) {
 
   try {
     const html2canvas = await ensureHtml2CanvasLoaded();
+    cardElement.classList.add("capture-mode");
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+
     const canvas = await html2canvas(cardElement, {
       scale: 2,
       useCORS: true,
       backgroundColor: null,
+      width: cardElement.offsetWidth,
+      height: cardElement.offsetHeight,
+      windowWidth: Math.max(window.innerWidth, cardElement.offsetWidth),
       ignoreElements: (element) => element.classList?.contains("capture-exclude"),
     });
 
@@ -86,6 +93,7 @@ async function downloadPredictionCardImage(cardElement, triggerButton) {
   } catch (error) {
     alert(`이미지 저장 실패: ${error.message}`);
   } finally {
+    cardElement.classList.remove("capture-mode");
     triggerButton.disabled = false;
     triggerButton.textContent = originalLabel;
   }
@@ -302,7 +310,7 @@ function renderLineupColumn(lineup, sideLabel) {
   return `<div class="lineup-col"><p class="lineup-side">${safeSideLabel}</p><ol class="lineup-list">${rows}</ol></div>`;
 }
 
-function renderKboLineupBlock(game) {
+function renderKboLineupBlock(game, leadingBlock = "") {
   const awayLineup = normalizeLineup(game.awayLineup);
   const homeLineup = normalizeLineup(game.homeLineup);
   const hasLineup = awayLineup.length > 0 || homeLineup.length > 0;
@@ -320,10 +328,10 @@ function renderKboLineupBlock(game) {
   }
 
   if (!hasLineup) {
-    return `<div class="daily-lineup"><p class="lineup-head">타순 라인업 · ${readinessText}</p><p class="lineup-empty">${helperText}</p></div>`;
+    return `<div class="daily-lineup">${leadingBlock}<p class="lineup-head">타순 라인업 · ${readinessText}</p><p class="lineup-empty">${helperText}</p></div>`;
   }
 
-  return `<div class="daily-lineup"><p class="lineup-head">타순 라인업 · ${readinessText}</p><div class="lineup-grid">${renderLineupColumn(awayLineup, `${game.awayTeam} (원정)`)}${renderLineupColumn(homeLineup, `${game.homeTeam} (홈)`)}</div></div>`;
+  return `<div class="daily-lineup">${leadingBlock}<p class="lineup-head">타순 라인업 · ${readinessText}</p><div class="lineup-grid">${renderLineupColumn(awayLineup, `${game.awayTeam} (원정)`)}${renderLineupColumn(homeLineup, `${game.homeTeam} (홈)`)}</div></div>`;
 }
 
 function getHeadToHeadEdge(awayValue, homeValue, lowerIsBetter) {
@@ -609,6 +617,56 @@ function renderMetricsRows(rows) {
   });
 }
 
+function renderDailySummary(predictions) {
+  if (!dailySummaryList) {
+    return;
+  }
+
+  if (!Array.isArray(predictions) || predictions.length === 0) {
+    dailySummaryList.innerHTML = "";
+    return;
+  }
+
+  dailySummaryList.innerHTML = predictions.map((game) => {
+    const isPreLineup = game.confidenceLevel === "pre_lineup";
+    const awayProb = formatPercent(game.awayWinProbability);
+    const homeProb = formatPercent(game.homeWinProbability);
+    const awayProbWidth = (game.awayWinProbability * 100).toFixed(1);
+    const homeProbWidth = (game.homeWinProbability * 100).toFixed(1);
+    const bettingTag = String(game.bettingTag || "주의").trim() || "주의";
+    const bettingTagClass = bettingTag === "추천"
+      ? "recommend"
+      : bettingTag === "회피"
+        ? "avoid"
+        : "caution";
+
+    return `<article class="daily-summary-item">
+      <div class="summary-status">
+        <span class="daily-bet-badge ${bettingTagClass}">${bettingTag}</span>
+        <span class="daily-mode ${isPreLineup ? "pre" : "post"}">${isPreLineup ? "PRE" : "POST"}</span>
+      </div>
+      <div class="summary-team summary-away">
+        <span class="summary-team-name">${escapeHtml(game.awayTeam)}</span>
+        <span class="summary-team-side">원정</span>
+      </div>
+      <div class="summary-prob">
+        <div class="daily-prob-row">
+          <span>${escapeHtml(game.awayTeam)}(원정) ${awayProb}</span>
+          <span>${escapeHtml(game.homeTeam)}(홈) ${homeProb}</span>
+        </div>
+        <div class="daily-prob-bar" aria-hidden="true">
+          <div class="daily-prob-away" style="width:${awayProbWidth}%"></div>
+          <div class="daily-prob-home" style="width:${homeProbWidth}%"></div>
+        </div>
+      </div>
+      <div class="summary-team summary-home">
+        <span class="summary-team-name">${escapeHtml(game.homeTeam)}</span>
+        <span class="summary-team-side">홈</span>
+      </div>
+    </article>`;
+  }).join("");
+}
+
 function renderDailyPredictions(payload) {
   const modeSummary = Array.isArray(payload.predictions)
     ? payload.predictions.every((g) => g.mode === "post_lineup")
@@ -620,9 +678,11 @@ function renderDailyPredictions(payload) {
     : "";
   dailyDateText.textContent = `${payload.dateText || payload.date} · ${payload.modelVersion || "model-unknown"} · ${modeSummary}${fallbackLabel}`;
   dailyPredictionsList.innerHTML = "";
+  renderDailySummary(payload.predictions);
 
   if (!Array.isArray(payload.predictions) || payload.predictions.length === 0) {
     dailyPredictionsList.innerHTML = '<p class="daily-empty">해당 날짜에 예측 가능한 경기가 없습니다.</p>';
+    renderDailySummary([]);
     return;
   }
 
@@ -731,7 +791,7 @@ function renderDailyPredictions(payload) {
     item.dataset.awayTeam = String(game.awayTeam || "");
     item.dataset.homeTeam = String(game.homeTeam || "");
     const headToHeadBlock = renderHeadToHeadMetrics(game);
-    const kboLineupBlock = renderKboLineupBlock(game);
+    const kboLineupBlock = renderKboLineupBlock(game, starterLine);
     item.innerHTML = `
       <div class="daily-top">
         <span class="daily-time">${game.gameTime}</span>
@@ -741,39 +801,46 @@ function renderDailyPredictions(payload) {
         <span class="daily-saber-badge ${saberApplied ? "on" : "off"}">${saberApplied ? "세이버 보정 적용" : "세이버 보정 대기"}</span>
         <button type="button" class="daily-download-btn capture-exclude" aria-label="예측 카드 이미지 저장">카드 저장</button>
       </div>
-      <div class="daily-matchup">
-        <div class="team-side away-side">
-          <span class="team-chip away">원정</span>
-          <span class="team-name-main">${game.awayTeam}</span>
+      <div class="daily-card-body">
+        <div class="daily-card-main">
+          <div class="daily-matchup">
+            <div class="team-side away-side">
+              <span class="team-chip away">원정</span>
+              <span class="team-name-main">${game.awayTeam}</span>
+            </div>
+            <span class="matchup-vs">VS</span>
+            <div class="team-side home-side">
+              <span class="team-name-main">${game.homeTeam}</span>
+              <span class="team-chip home">홈</span>
+            </div>
+          </div>
+          <div class="daily-prob-row">
+            <span>${game.awayTeam}(원정) ${awayProb}</span>
+            <span>${game.homeTeam}(홈) ${homeProb}</span>
+          </div>
+          <div class="daily-prob-bar">
+            <div class="daily-prob-away" style="width:${awayProbWidth}%"></div>
+            <div class="daily-prob-home" style="width:${homeProbWidth}%"></div>
+          </div>
+          <div class="daily-scoreline">${isPreLineup ? "잠정 스코어" : "예상 스코어"}: ${game.awayTeam} ${game.predictedAwayScore} : ${game.predictedHomeScore} ${game.homeTeam}</div>
+          <div class="daily-gap">예상 점수차: ${game.predictedWinner} ${game.predictedRunDiff?.toFixed(1) ?? "-"}점 우세</div>
+          <div class="daily-model-meta">
+            <div class="meta-row"><span class="meta-tag">최종 결정확률</span><span>원정 ${awayProb} / 홈 ${homeProb}</span></div>
+            <div class="meta-row"><span class="meta-tag alt">순수 ML확률</span><span>원정 ${mlAwayProb} / 홈 ${mlHomeProb}</span></div>
+            ${saberExtraMetaRows}
+          </div>
+          <div class="daily-card-footer">
+            ${bettingReason ? `<div class="daily-bet-reason">베팅 시그널: ${bettingReason}</div>` : ""}
+            ${actualResultBlock}
+            <div class="daily-winner">예상 승리팀: <strong>${game.predictedWinner}</strong> <span class="confidence">(${confidence})</span> ${hitBadge}</div>
+            <div class="daily-note">${game.predictionNote || (isPreLineup ? "라인업 발표 전으로 최근 라인업 기준입니다." : "금일 라인업 기준입니다.")}</div>
+          </div>
+          ${headToHeadBlock}
         </div>
-        <span class="matchup-vs">VS</span>
-        <div class="team-side home-side">
-          <span class="team-name-main">${game.homeTeam}</span>
-          <span class="team-chip home">홈</span>
+        <div class="daily-card-details">
+          ${kboLineupBlock}
         </div>
       </div>
-      ${starterLine}
-      ${kboLineupBlock}
-      <div class="daily-prob-row">
-        <span>${game.awayTeam}(원정) ${awayProb}</span>
-        <span>${game.homeTeam}(홈) ${homeProb}</span>
-      </div>
-      <div class="daily-model-meta">
-        <div class="meta-row"><span class="meta-tag">최종 결정확률</span><span>원정 ${awayProb} / 홈 ${homeProb}</span></div>
-        <div class="meta-row"><span class="meta-tag alt">순수 ML확률</span><span>원정 ${mlAwayProb} / 홈 ${mlHomeProb}</span></div>
-        ${saberExtraMetaRows}
-      </div>
-      <div class="daily-prob-bar">
-        <div class="daily-prob-away" style="width:${awayProbWidth}%"></div>
-        <div class="daily-prob-home" style="width:${homeProbWidth}%"></div>
-      </div>
-      <div class="daily-scoreline">${isPreLineup ? "잠정 스코어" : "예상 스코어"}: ${game.awayTeam} ${game.predictedAwayScore} : ${game.predictedHomeScore} ${game.homeTeam}</div>
-      <div class="daily-gap">예상 점수차: ${game.predictedWinner} ${game.predictedRunDiff?.toFixed(1) ?? "-"}점 우세</div>
-      ${bettingReason ? `<div class="daily-bet-reason">베팅 시그널: ${bettingReason}</div>` : ""}
-      ${actualResultBlock}
-      ${headToHeadBlock}
-      <div class="daily-winner">예상 승리팀: <strong>${game.predictedWinner}</strong> <span class="confidence">(${confidence})</span> ${hitBadge}</div>
-      <div class="daily-note">${game.predictionNote || (isPreLineup ? "라인업 발표 전으로 최근 라인업 기준입니다." : "금일 라인업 기준입니다.")}</div>
     `;
     dailyPredictionsList.appendChild(item);
   });
@@ -781,6 +848,7 @@ function renderDailyPredictions(payload) {
 
 async function loadDailyPredictions() {
   dailyPredictionsList.innerHTML = '<p class="daily-empty">게임센터 일정 기반 자동 예측을 계산 중...</p>';
+  renderDailySummary([]);
 
   try {
     const response = await fetch(
@@ -796,6 +864,7 @@ async function loadDailyPredictions() {
     return payload;
   } catch (error) {
     dailyPredictionsList.innerHTML = `<p class="daily-empty">자동 예측 로드 실패: ${error.message}</p>`;
+    renderDailySummary([]);
     return null;
   }
 }
@@ -831,6 +900,7 @@ async function loadData() {
       modelStatusRow.innerHTML = "";
     }
     dailyPredictionsList.innerHTML = '<p class="daily-empty">게임센터 자동 예측을 불러오지 못했습니다.</p>';
+      renderDailySummary([]);
     statusText.textContent = `데이터 로드 실패: ${error.message}. npm start 실행 후 http://localhost:3000 으로 접속해 주세요.`;
   }
 }
