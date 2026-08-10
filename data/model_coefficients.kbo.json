@@ -1,6 +1,6 @@
 {
-  "version": "trained-logistic-kbo-2026-08-09",
-  "trainedAt": "2026-08-09T14:09:02.886Z",
+  "version": "trained-logistic-kbo-2026-08-10",
+  "trainedAt": "2026-08-10T14:09:08.890Z",
   "samples": 490,
   "trainSamples": 480,
   "validSamples": 10,
