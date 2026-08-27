@@ -1,50 +1,50 @@
 {
-  "tunedAt": "2026-08-26T17:20:00.584Z",
+  "tunedAt": "2026-08-27T17:19:12.857Z",
   "rangeFrom": "20260331",
-  "rangeTo": "20260826",
-  "sampleSize": 670,
+  "rangeTo": "20260827",
+  "sampleSize": 674,
   "best": {
     "clampThreshold": 3,
     "baseWeight": 0.7,
-    "markovWeight": 0.2,
-    "monteWeight": 0.1,
-    "mae": 2.540016268656716
+    "markovWeight": 0.25,
+    "monteWeight": 0.05,
+    "mae": 2.545378115727005
   },
   "top5": [
     {
       "clampThreshold": 3,
       "baseWeight": 0.7,
-      "markovWeight": 0.2,
-      "monteWeight": 0.1,
-      "mae": 2.540016268656716
+      "markovWeight": 0.25,
+      "monteWeight": 0.05,
+      "mae": 2.545378115727005
     },
     {
       "clampThreshold": 3,
       "baseWeight": 0.7,
-      "markovWeight": 0.25,
-      "monteWeight": 0.05,
-      "mae": 2.540239104477608
-    },
-    {
-      "clampThreshold": 2.5,
-      "baseWeight": 0.7,
       "markovWeight": 0.2,
       "monteWeight": 0.1,
-      "mae": 2.544883134328358
+      "mae": 2.5456413204747768
     },
     {
       "clampThreshold": 2.5,
       "baseWeight": 0.7,
       "markovWeight": 0.25,
       "monteWeight": 0.05,
-      "mae": 2.5452673134328325
+      "mae": 2.5457612759643937
     },
     {
-      "clampThreshold": 3,
+      "clampThreshold": 2.5,
+      "baseWeight": 0.7,
+      "markovWeight": 0.2,
+      "monteWeight": 0.1,
+      "mae": 2.5461752967359055
+    },
+    {
+      "clampThreshold": 2.5,
       "baseWeight": 0.65,
-      "markovWeight": 0.2,
-      "monteWeight": 0.15,
-      "mae": 2.5469597014925376
+      "markovWeight": 0.3,
+      "monteWeight": 0.05,
+      "mae": 2.551379933234425
     }
   ]
 }
