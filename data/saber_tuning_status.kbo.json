@@ -1,5 +1,5 @@
 {
-  "tunedAt": "2026-09-13T17:21:22.097Z",
+  "tunedAt": "2026-09-14T17:21:21.611Z",
   "rangeFrom": "20260331",
   "rangeTo": "20260913",
   "sampleSize": 745,
@@ -30,7 +30,7 @@
       "baseWeight": 0.7,
       "markovWeight": 0.2,
       "monteWeight": 0.1,
-      "mae": 2.551847583892614
+      "mae": 2.5518475838926142
     },
     {
       "clampThreshold": 2.5,
