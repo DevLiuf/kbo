@@ -1,14 +1,14 @@
 {
-  "tunedAt": "2026-09-23T17:24:47.919Z",
+  "tunedAt": "2026-09-24T17:22:34.640Z",
   "rangeFrom": "20260331",
-  "rangeTo": "20260923",
-  "sampleSize": 783,
+  "rangeTo": "20260924",
+  "sampleSize": 786,
   "best": {
     "clampThreshold": 3,
     "baseWeight": 0.7,
     "markovWeight": 0.2,
     "monteWeight": 0.1,
-    "mae": 2.558414623243931
+    "mae": 2.554203307888038
   },
   "top5": [
     {
@@ -16,35 +16,35 @@
       "baseWeight": 0.7,
       "markovWeight": 0.2,
       "monteWeight": 0.1,
-      "mae": 2.558414623243931
+      "mae": 2.554203307888038
     },
     {
       "clampThreshold": 3,
       "baseWeight": 0.7,
       "markovWeight": 0.25,
       "monteWeight": 0.05,
-      "mae": 2.5585227011494265
+      "mae": 2.5547121183206074
     },
     {
       "clampThreshold": 2.5,
       "baseWeight": 0.7,
       "markovWeight": 0.2,
       "monteWeight": 0.1,
-      "mae": 2.5597537675606628
+      "mae": 2.555428880407123
     },
     {
       "clampThreshold": 2.5,
       "baseWeight": 0.7,
       "markovWeight": 0.25,
       "monteWeight": 0.05,
-      "mae": 2.5598945402298874
+      "mae": 2.55558167938931
     },
     {
       "clampThreshold": 3.5,
       "baseWeight": 0.7,
       "markovWeight": 0.25,
       "monteWeight": 0.05,
-      "mae": 2.563441443167307
+      "mae": 2.558591952926206
     }
   ]
 }
