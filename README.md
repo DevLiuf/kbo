@@ -16,6 +16,10 @@ npm start
 
 브라우저에서 `http://localhost:3000`에 접속합니다. HTML 파일을 직접 열면 API를 사용할 수 없습니다.
 
+### 2.1.1 첫 자동 예약 설치 수정
+
+기존 일별 수집 작업이 없는 경우 빈 목록을 잘못 처리해 존재하지 않는 작업을 삭제하려던 오류를 수정했습니다. 이미 등록된 `KBO-AutoCollect-Plan`은 삭제하지 않아도 됩니다. 코드를 갱신한 뒤 설치 명령을 다시 실행하면 같은 작업을 갱신합니다.
+
 ### 2.1.0 경기 전 자동 예약
 
 Windows에서 공식 경기 시작 시각에 맞춰 30분 전부터 5분 간격으로 수집 작업을 자동 등록합니다. 하루 종일 반복하지 않으며 기존 02시 학습 작업은 변경하지 않습니다. 설치 명령과 로그인 조건은 아래 경기 전 수집 절을 참고하세요.
@@ -65,14 +69,19 @@ node scripts/helper-pc-train-and-tune.js --collectOnly=true --fetchResults=false
 
 ### Windows 자동 예약: 시작 시각 입력 불필요
 
-Git 작업 폴더를 갱신한 뒤, 수집에 사용할 Windows 계정의 CMD에서 한 번 실행합니다. Node.js 22 LTS를 권장합니다.
+Git 작업 폴더를 갱신한 뒤, 수집에 사용할 Windows 계정의 **PowerShell**에서 실행합니다. Node.js 22 이상 LTS를 권장합니다. 각 단계가 실패하면 다음 단계는 실행하지 않습니다.
 
-```bat
-cd /d C:\kbo
-git pull --ff-only origin main
-npm ci
-node scripts/auto-collect-pregame.js --install
+```powershell
+Set-Location 'C:\kbo'
+if ($?) {
+    git pull --ff-only origin main
+    if ($LASTEXITCODE -eq 0) {
+        node .\scripts\auto-collect-pregame.js --install
+    }
+}
 ```
+
+처음 설치해 의존성이 없다면 폴더 이동 후 `npm ci`가 성공한 다음 위 명령을 실행하세요. 이미 설치했다면 이 예약 오류 수정 때문에 npm을 재설치할 필요는 없습니다.
 
 - `KBO-AutoCollect-Plan`: 매일 서울시간 03:00 및 해당 계정 로그인 시 공식 당일 일정을 조회합니다. 설치 직후에도 조회합니다.
 - `KBO-AutoCollect-YYYYMMDD`: 실제 시작 **30·25·20·15·10·5분 전**에만 실행합니다. 시작 시간이 같은 경기는 한 번에 처리합니다. 24시간 5분 반복은 없습니다.

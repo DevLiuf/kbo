@@ -1,9 +1,9 @@
 {
-  "version": "2.1.0",
+  "version": "2.1.1",
   "files": [
     {
       "path": "README.md",
-      "sha256": "00241db4249930c27b913aa3280f4520d75610ddf475fe1773c2cfbe2dca84f0"
+      "sha256": "e387e2a731ac449a81c90e457679b7a5e2962f1fff9b33a268000fa42d0be686"
     },
     {
       "path": "lib/artifacts.js",
@@ -35,11 +35,11 @@
     },
     {
       "path": "package-lock.json",
-      "sha256": "1e8bd8a8236a06c7996ef43c5f5f06e63b8125f84781ea0035d0f72b65acb0b9"
+      "sha256": "c88945e9307ab9cb929f1c52baa377a93bd62ee36d94db1769eec24d5ce79239"
     },
     {
       "path": "package.json",
-      "sha256": "c53815548a91e87a9c287dc17d71f9c3b539eccdb2d789999fa128546d05ad75"
+      "sha256": "02e4396b7994eea1990d258a14ff63211c3787f24d96e0b5a4bd51c675fec707"
     },
     {
       "path": "quick-train-tune.bat",
@@ -47,7 +47,7 @@
     },
     {
       "path": "scripts/auto-collect-pregame.js",
-      "sha256": "fea53d48e80383c00dfe895ab1831e185252e71197d975d8e4157f3adff22a67"
+      "sha256": "8f9d11f3cd07d292433d4b13d745f9b65ae43db72d301da45b8c73c9fb42f7a1"
     },
     {
       "path": "scripts/backfill-snapshots.js",

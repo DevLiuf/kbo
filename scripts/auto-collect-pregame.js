@@ -72,7 +72,7 @@ async function register(name, content) {
 async function applyPlan(plan, sid, baseUrl) {
   if (plan.slots.length > 48) throw new Error("Schedule exceeds Windows per-task trigger limit");
   const name = `${PREFIX}${plan.date}`;
-  const names = JSON.parse(powershell(`ConvertTo-Json -Compress -InputObject @((Get-ScheduledTask | Where-Object { $_.TaskPath -eq '\\' -and $_.TaskName -match '^KBO-AutoCollect-[0-9]{8}$' }).TaskName)`).trim() || "[]");
+  const names = JSON.parse(powershell(`ConvertTo-Json -Compress -InputObject @(Get-ScheduledTask | Where-Object { $_.TaskPath -eq '\\' -and $_.TaskName -match '^KBO-AutoCollect-[0-9]{8}$' } | Select-Object -ExpandProperty TaskName)`).trim() || "[]");
   // Registration must succeed before replacing older daily plans. Never touch kbo-helper.
   if (plan.slots.length) {
     const triggers = plan.slots.map((time) => `<TimeTrigger><StartBoundary>${time}</StartBoundary><Enabled>true</Enabled></TimeTrigger>`).join("");
