@@ -1,33 +1,8 @@
 const fs = require("fs/promises");
 const path = require("path");
-const http = require("http");
+const { parseArgs } = require("./ml-utils");
+const { finiteNumber: toSafeNumber, loadBacktestRows, calcBetOutcome } = require("../lib/backtest");
 
-const { iterDates, parseArgs } = require("./ml-utils");
-
-function fetchJson(url) {
-  return new Promise((resolve, reject) => {
-    http
-      .get(url, (res) => {
-        let body = "";
-        res.on("data", (chunk) => {
-          body += chunk;
-        });
-        res.on("end", () => {
-          try {
-            resolve(JSON.parse(body));
-          } catch (error) {
-            reject(error);
-          }
-        });
-      })
-      .on("error", reject);
-  });
-}
-
-function toSafeNumber(value, fallback = null) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
-}
 
 function csvEscape(value) {
   const text = String(value ?? "");
@@ -69,46 +44,23 @@ function getTagStakeMap({ recommendStake, cautionStake, avoidStake }) {
   };
 }
 
-function calcBetOutcome({ stakeUnits, odds, winnerHit }) {
-  if (!Number.isFinite(stakeUnits) || stakeUnits <= 0) {
-    return {
-      placed: false,
-      payoutUnits: 0,
-      profitUnits: 0,
-    };
-  }
-
-  const safeOdds = Number.isFinite(odds) && odds > 1 ? odds : 1.9;
-  if (winnerHit) {
-    const payoutUnits = stakeUnits * safeOdds;
-    return {
-      placed: true,
-      payoutUnits,
-      profitUnits: payoutUnits - stakeUnits,
-    };
-  }
-
-  return {
-    placed: true,
-    payoutUnits: 0,
-    profitUnits: -stakeUnits,
-  };
-}
 
 function summarizeProfitRows(rows) {
   const betRows = rows.filter((row) => row.betPlaced);
   const totalStakeUnits = betRows.reduce((sum, row) => sum + row.stakeUnits, 0);
   const totalPayoutUnits = betRows.reduce((sum, row) => sum + row.payoutUnits, 0);
   const totalProfitUnits = betRows.reduce((sum, row) => sum + row.profitUnits, 0);
-  const wins = betRows.filter((row) => row.winnerHit).length;
-  const losses = betRows.length - wins;
+  const wins = betRows.filter((row) => row.winnerHit === true && !row.isDraw).length;
+  const losses = betRows.filter((row) => row.winnerHit === false && !row.isDraw).length;
+  const voidCount = betRows.filter((row) => row.isDraw).length;
 
   return {
     games: rows.length,
     bets: betRows.length,
     wins,
     losses,
-    hitRate: betRows.length > 0 ? round(wins / betRows.length) : null,
+    voidCount,
+    hitRate: wins + losses > 0 ? round(wins / (wins + losses)) : null,
     totalStakeUnits: round(totalStakeUnits),
     totalPayoutUnits: round(totalPayoutUnits),
     totalProfitUnits: round(totalProfitUnits),
@@ -141,7 +93,6 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const from = String(args.from || "").trim();
   const to = String(args.to || "").trim();
-  const baseUrl = String(args.baseUrl || "http://localhost:3000").replace(/\/$/, "");
   const outDir = String(args.outDir || path.join(process.cwd(), "data", "backtests"));
   const outPrefix = String(args.outPrefix || `betting_tag_profit_${from}_${to}`);
 
@@ -152,36 +103,28 @@ async function main() {
   const cautionStake = Number(args.cautionStake || 0.5);
   const avoidStake = Number(args.avoidStake || 0);
 
-  if (!/^\d{8}$/.test(from) || !/^\d{8}$/.test(to)) {
-    throw new Error("Usage: node scripts/export-betting-tag-profitability.js --from=YYYYMMDD --to=YYYYMMDD [--baseUrl=http://localhost:3000]");
-  }
 
   const oddsByTag = getTagOddsMap({ recommendOdds, cautionOdds, avoidOdds });
   const stakeByTag = getTagStakeMap({ recommendStake, cautionStake, avoidStake });
 
+  const { rows: games, source } = await loadBacktestRows(args);
   const rows = [];
-  for (const date of iterDates(from, to)) {
-    const payload = await fetchJson(`${baseUrl}/api/predictions/gameday?date=${date}&includeFinished=true`);
-    for (const game of payload.predictions || []) {
-      const actualAway = toSafeNumber(game.actualAwayScore);
-      const actualHome = toSafeNumber(game.actualHomeScore);
-      if (!Number.isFinite(actualAway) || !Number.isFinite(actualHome)) {
-        continue;
-      }
+  for (const game of games) {
 
       const modelFeatures = game.modelFeatures || {};
       const bettingTag = String(game.bettingTag || "주의");
       const stakeUnits = Number.isFinite(stakeByTag[bettingTag]) ? stakeByTag[bettingTag] : cautionStake;
       const odds = Number.isFinite(oddsByTag[bettingTag]) ? oddsByTag[bettingTag] : cautionOdds;
-      const winnerHit = game.predictionHit === true;
+      const winnerHit = game.predictionHit;
       const outcome = calcBetOutcome({
         stakeUnits,
         odds,
         winnerHit,
+        isDraw: game.isDraw,
       });
 
       rows.push({
-        gameDate: String(game.gameDate || date),
+        gameDate: String(game.gameDate),
         gameTime: String(game.gameTime || ""),
         awayTeam: String(game.awayTeam || ""),
         homeTeam: String(game.homeTeam || ""),
@@ -190,6 +133,10 @@ async function main() {
         predictedWinner: String(game.predictedWinner || ""),
         actualWinner: String(game.actualWinner || ""),
         winnerHit,
+        isDraw: game.isDraw,
+        decisionBasis: game.decisionBasis,
+        predictedRunDiff: toSafeNumber(game.predictedRunDiff),
+        edgeTier: String(modelFeatures.edgeTier || ""),
         homeWinProbability: toSafeNumber(game.homeWinProbability),
         awayWinProbability: toSafeNumber(game.awayWinProbability),
         winProbGap: toSafeNumber(modelFeatures.winProbGap),
@@ -204,7 +151,6 @@ async function main() {
         profitUnits: round(outcome.profitUnits),
       });
     }
-  }
 
   rows.sort((a, b) => `${a.gameDate} ${a.gameTime}`.localeCompare(`${b.gameDate} ${b.gameTime}`));
 
@@ -217,10 +163,11 @@ async function main() {
 
   const summary = {
     range: { from, to },
+    source,
     assumptions: {
       oddsByTag,
       stakeByTag,
-      note: "Decimal odds model. profit = payout - stake, ROI = totalProfit / totalStake",
+      note: "SIMULATION ONLY: assumed decimal odds, not historical market odds or market expected value (EV). Draws refund stake (profit 0). profit = payout - stake; ROI includes refunded stakes; hit rate excludes draws.",
     },
     games: rows.length,
     overall: summarizeProfitRows(rows),
@@ -241,6 +188,10 @@ async function main() {
     "predictedWinner",
     "actualWinner",
     "winnerHit",
+    "isDraw",
+    "decisionBasis",
+    "predictedRunDiff",
+    "edgeTier",
     "homeWinProbability",
     "awayWinProbability",
     "winProbGap",

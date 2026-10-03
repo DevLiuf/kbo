@@ -1,6 +1,6 @@
 {
   "name": "kbo",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -15,14 +15,19 @@
     "ml:backfill-snapshots": "node scripts/backfill-snapshots.js",
     "ml:export-backtest": "node scripts/export-saber-backtest-details.js",
     "ml:export-betting-profit": "node scripts/export-betting-tag-profitability.js",
+    "ml:tune-saber": "node scripts/tune-saber-weights.js",
+    "ml:tune-confidence": "node scripts/tune-confidence-compression.js",
     "ml:walk-forward": "node scripts/walk-forward-eval.js",
-    "ml:import-market-odds": "node scripts/import-market-odds.js",
-    "ml:search-selective-policy": "node scripts/search-selective-policy.js"
+    "ml:search-selective-policy": "node scripts/search-selective-policy.js",
+    "helper:bundle": "node scripts/build-helper-bundle.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
+  "engines": {
+    "node": ">=20.18.1"
+  },
   "dependencies": {
     "cheerio": "^1.2.0",
     "express": "^5.2.1"

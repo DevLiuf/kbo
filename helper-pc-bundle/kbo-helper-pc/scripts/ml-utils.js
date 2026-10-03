@@ -8,8 +8,9 @@ async function readNdjson(filePath) {
       .map((line) => line.trim())
       .filter(Boolean)
       .map((line) => JSON.parse(line));
-  } catch {
-    return [];
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw new Error(`Failed to read NDJSON ${filePath}: ${error.message}`, { cause: error });
   }
 }
 
@@ -27,8 +28,9 @@ function parseArgs(argv) {
     if (!raw.startsWith("--")) {
       continue;
     }
-    const [key, value] = raw.slice(2).split("=");
-    args[key] = value === undefined ? true : value;
+    const separator = raw.indexOf("=");
+    const key = separator < 0 ? raw.slice(2) : raw.slice(2, separator);
+    args[key] = separator < 0 ? true : raw.slice(separator + 1);
   }
   return args;
 }

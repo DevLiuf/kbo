@@ -1,33 +1,8 @@
 const fs = require("fs/promises");
 const path = require("path");
-const http = require("http");
+const { parseArgs } = require("./ml-utils");
+const { finiteNumber: toSafeNumber, loadBacktestRows } = require("../lib/backtest");
 
-const { iterDates, parseArgs } = require("./ml-utils");
-
-function fetchJson(url) {
-  return new Promise((resolve, reject) => {
-    http
-      .get(url, (res) => {
-        let body = "";
-        res.on("data", (chunk) => {
-          body += chunk;
-        });
-        res.on("end", () => {
-          try {
-            resolve(JSON.parse(body));
-          } catch (error) {
-            reject(error);
-          }
-        });
-      })
-      .on("error", reject);
-  });
-}
-
-function toSafeNumber(value, fallback = null) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
-}
 
 function csvEscape(value) {
   const text = String(value ?? "");
@@ -99,7 +74,10 @@ function buildGroupSummary(rows, field) {
   for (const [key, grouped] of groups.entries()) {
     summary[key] = {
       games: grouped.length,
-      winnerAccuracy: mean(grouped.map((row) => (row.winnerHit ? 1 : 0))),
+      decisiveGames: grouped.filter((row) => !row.isDraw).length,
+      drawGames: grouped.filter((row) => row.isDraw).length,
+      baselineMae: mean(grouped.map((row) => row.baselineMae)),
+      winnerAccuracy: mean(grouped.map((row) => row.winnerHit === null ? null : Number(row.winnerHit))),
       predictedScoreMae: mean(grouped.map((row) => row.predictedScoreMae)),
       saberExpectedMae: mean(grouped.map((row) => row.saberExpectedMae)),
       markovMae: mean(grouped.map((row) => row.markovMae)),
@@ -116,45 +94,43 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const from = String(args.from || "").trim();
   const to = String(args.to || "").trim();
-  const baseUrl = String(args.baseUrl || "http://localhost:3000").replace(/\/$/, "");
   const outDir = String(args.outDir || path.join(process.cwd(), "data", "backtests"));
   const outPrefix = String(args.outPrefix || `saber_backtest_${from}_${to}`);
 
-  if (!/^\d{8}$/.test(from) || !/^\d{8}$/.test(to)) {
-    throw new Error("Usage: node scripts/export-saber-backtest-details.js --from=YYYYMMDD --to=YYYYMMDD [--baseUrl=http://localhost:3000]");
-  }
 
+  const { rows: games, source } = await loadBacktestRows(args);
   const rows = [];
-  for (const date of iterDates(from, to)) {
-    const payload = await fetchJson(`${baseUrl}/api/predictions/gameday?date=${date}&includeFinished=true`);
-    for (const game of payload.predictions || []) {
-      const actualAway = toSafeNumber(game.actualAwayScore);
-      const actualHome = toSafeNumber(game.actualHomeScore);
-      if (!Number.isFinite(actualAway) || !Number.isFinite(actualHome)) {
-        continue;
-      }
+  for (const game of games) {
+      const actualAway = game.actualAwayScore;
+      const actualHome = game.actualHomeScore;
 
       const modelFeatures = game.modelFeatures || {};
+      const scoreInputs = game.scoreModelInputs || {};
       const predictedAway = toSafeNumber(game.predictedAwayScore);
       const predictedHome = toSafeNumber(game.predictedHomeScore);
       const expectedAway = toSafeNumber(game.expectedAwayRuns);
       const expectedHome = toSafeNumber(game.expectedHomeRuns);
-      const markovAway = toSafeNumber(modelFeatures.markovAwayRuns);
-      const markovHome = toSafeNumber(modelFeatures.markovHomeRuns);
-      const monteAway = toSafeNumber(modelFeatures.monteCarloAwayRuns);
-      const monteHome = toSafeNumber(modelFeatures.monteCarloHomeRuns);
+      const baselineAway = toSafeNumber(scoreInputs.baselineAwayRuns);
+      const baselineHome = toSafeNumber(scoreInputs.baselineHomeRuns);
+      const markovAway = toSafeNumber(scoreInputs.markovAwayRuns);
+      const markovHome = toSafeNumber(scoreInputs.markovHomeRuns);
+      const monteAway = toSafeNumber(scoreInputs.monteCarloAwayRuns);
+      const monteHome = toSafeNumber(scoreInputs.monteCarloHomeRuns);
       const over85Prob = toSafeNumber(modelFeatures.monteCarloTotalOver85Prob);
       const actualTotal = actualAway + actualHome;
-      const probGap = Math.abs((toSafeNumber(game.homeWinProbability, 0.5)) - (toSafeNumber(game.awayWinProbability, 0.5)));
+      const homeProb = toSafeNumber(game.homeWinProbability);
+      const awayProb = toSafeNumber(game.awayWinProbability);
+      const probGap = homeProb !== null && awayProb !== null ? Math.abs(homeProb - awayProb) : null;
 
       const row = {
-        gameDate: String(game.gameDate || date),
+        gameDate: String(game.gameDate),
         gameTime: String(game.gameTime || ""),
         awayTeam: String(game.awayTeam || ""),
         homeTeam: String(game.homeTeam || ""),
         predictedWinner: String(game.predictedWinner || ""),
         actualWinner: String(game.actualWinner || ""),
-        winnerHit: game.predictionHit === true,
+        winnerHit: game.predictionHit,
+        isDraw: game.isDraw,
         awayWinProbability: toSafeNumber(game.awayWinProbability),
         homeWinProbability: toSafeNumber(game.homeWinProbability),
         predictedAwayScore: predictedAway,
@@ -167,13 +143,16 @@ async function main() {
         expectedAwayRuns: expectedAway,
         expectedHomeRuns: expectedHome,
         saberExpectedMae: scoreMae(expectedAway, expectedHome, actualAway, actualHome),
+        baselineAwayRuns: baselineAway,
+        baselineHomeRuns: baselineHome,
+        baselineMae: scoreMae(baselineAway, baselineHome, actualAway, actualHome),
         markovAwayRuns: markovAway,
         markovHomeRuns: markovHome,
         markovMae: scoreMae(markovAway, markovHome, actualAway, actualHome),
         monteCarloAwayRuns: monteAway,
         monteCarloHomeRuns: monteHome,
         monteCarloMae: scoreMae(monteAway, monteHome, actualAway, actualHome),
-        saberApplied: modelFeatures.saberApplied === true,
+        saberApplied: scoreInputs.saberApplied === true,
         totalBand: getTotalBand(actualTotal),
         edgeBand: getEdgeBand(probGap),
         over85Prob,
@@ -182,15 +161,18 @@ async function main() {
 
       rows.push(row);
     }
-  }
 
   rows.sort((a, b) => `${a.gameDate} ${a.gameTime}`.localeCompare(`${b.gameDate} ${b.gameTime}`));
 
   const summary = {
     range: { from, to },
+    source,
     games: rows.length,
     overall: {
-      winnerAccuracy: mean(rows.map((row) => (row.winnerHit ? 1 : 0))),
+      winnerAccuracy: mean(rows.map((row) => row.winnerHit === null ? null : Number(row.winnerHit))),
+      decisiveGames: rows.filter((row) => !row.isDraw).length,
+      drawGames: rows.filter((row) => row.isDraw).length,
+      baselineMae: mean(rows.map((row) => row.baselineMae)),
       predictedScoreMae: mean(rows.map((row) => row.predictedScoreMae)),
       saberExpectedMae: mean(rows.map((row) => row.saberExpectedMae)),
       markovMae: mean(rows.map((row) => row.markovMae)),
@@ -209,6 +191,7 @@ async function main() {
     "predictedWinner",
     "actualWinner",
     "winnerHit",
+    "isDraw",
     "awayWinProbability",
     "homeWinProbability",
     "predictedAwayScore",
@@ -221,6 +204,9 @@ async function main() {
     "expectedAwayRuns",
     "expectedHomeRuns",
     "saberExpectedMae",
+    "baselineAwayRuns",
+    "baselineHomeRuns",
+    "baselineMae",
     "markovAwayRuns",
     "markovHomeRuns",
     "markovMae",

@@ -1019,16 +1019,24 @@ tbody tr:hover {
   .model-status-pill {
     max-width: 100%;
     min-width: 0;
+    flex-wrap: wrap;
   }
 
-  .model-status-value,
-  .model-status-range {
+  .model-status-label,
+  .model-status-value {
+    flex: 0 0 auto;
+    white-space: nowrap;
     overflow: visible;
     text-overflow: clip;
+  }
+
+  .model-status-range {
+    flex-basis: 100%;
     white-space: normal;
-    display: inline;
-    max-width: 100%;
+    word-break: keep-all;
     overflow-wrap: anywhere;
+    overflow: visible;
+    text-overflow: clip;
   }
 
   .daily-header {

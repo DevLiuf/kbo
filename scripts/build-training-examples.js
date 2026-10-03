@@ -1,197 +1,67 @@
 const fs = require("fs/promises");
 const path = require("path");
+const { parseArgs } = require("./ml-utils");
+const { FEATURE_SCHEMA_VERSION, isPregameSnapshot } = require("../lib/prediction-contract");
+const { FEATURE_NAMES, readRows, validateRange, inRange } = require("../lib/logistic");
 
-const { parseArgs, readNdjson } = require("./ml-utils");
-
-const CONTACT_TO_RPG_COEFF = 8;
-const POWER_TO_RPG_COEFF = 0.9;
-const POWER_CONTACT_MIX_COEFF = 1.6;
-const CONTACT_PENALTY_MIX_COEFF = 10;
-
-function buildReconstructedMlBattingFeatures({ offenseDiff, battingAvgDiff, hrPerGameDiff }) {
-  const runCreationResidualDiff = offenseDiff - (
-    (battingAvgDiff * CONTACT_TO_RPG_COEFF)
-    + (hrPerGameDiff * POWER_TO_RPG_COEFF)
-  );
-  const powerContactMixDiff =
-    (hrPerGameDiff * POWER_CONTACT_MIX_COEFF)
-    - (battingAvgDiff * CONTACT_PENALTY_MIX_COEFF);
-
-  return {
-    runCreationResidualDiff,
-    powerContactMixDiff,
-  };
-}
-
-function resolveRowGameKey(row) {
-  return String(row.gameKey || row.gameId || "").trim();
-}
-
-function latestSnapshotsByGame(rows) {
-  const map = new Map();
-  for (const row of rows) {
-    const key = resolveRowGameKey(row);
-    if (!key) {
+function buildExamples(snapshots, results, { from, to } = {}) {
+  validateRange(from, to);
+  const exclusions = { invalidSnapshot: 0, incomplete: 0, invalidScore: 0, draw: 0,
+    missingPregameSnapshot: 0, invalidFeatures: 0, dateMismatch: 0, outOfRange: 0 };
+  const latest = new Map();
+  for (const row of snapshots) {
+    if (String(row.league || "kbo").toLowerCase() !== "kbo") continue;
+    if (!isPregameSnapshot(row) || typeof row.gameKey !== "string" || !row.gameKey) {
+      exclusions.invalidSnapshot += 1;
       continue;
     }
-
-    const rowTimestamp = typeof row.asOfTimestamp === "string" ? row.asOfTimestamp : "";
-    const current = map.get(key);
-    const currentTimestamp = current && typeof current.asOfTimestamp === "string"
-      ? current.asOfTimestamp
-      : "";
-    if (!current || rowTimestamp > currentTimestamp) {
-      map.set(key, row);
-    }
-  }
-  return map;
-}
-
-function toFiniteNumber(value) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function americanOddsToProbability(odds) {
-  const numeric = toFiniteNumber(odds);
-  if (!Number.isFinite(numeric) || numeric === 0) {
-    return null;
-  }
-
-  if (numeric > 0) {
-    return 100 / (numeric + 100);
-  }
-
-  const absValue = Math.abs(numeric);
-  return absValue / (absValue + 100);
-}
-
-function resolveMarketHomeWinProbability(row) {
-  const directHomeProb = toFiniteNumber(row.homeWinProbability ?? row.homeProb ?? row.homeImpliedProb);
-  const directAwayProb = toFiniteNumber(row.awayWinProbability ?? row.awayProb ?? row.awayImpliedProb);
-
-  if (Number.isFinite(directHomeProb) && Number.isFinite(directAwayProb) && (directHomeProb + directAwayProb) > 0) {
-    const sum = directHomeProb + directAwayProb;
-    return directHomeProb / sum;
-  }
-
-  if (Number.isFinite(directHomeProb)) {
-    return Math.max(0, Math.min(1, directHomeProb));
-  }
-
-  const homeMoneylineProb = americanOddsToProbability(row.homeMoneyline ?? row.homeOdds);
-  const awayMoneylineProb = americanOddsToProbability(row.awayMoneyline ?? row.awayOdds);
-  if (Number.isFinite(homeMoneylineProb) && Number.isFinite(awayMoneylineProb) && (homeMoneylineProb + awayMoneylineProb) > 0) {
-    const sum = homeMoneylineProb + awayMoneylineProb;
-    return homeMoneylineProb / sum;
-  }
-
-  return null;
-}
-
-function latestMarketOddsByGame(rows) {
-  const map = new Map();
-  for (const row of rows) {
-    const key = resolveRowGameKey(row);
-    if (!key) {
+    if (!FEATURE_NAMES.every((name) => Number.isFinite(row.features[name]))) {
+      exclusions.invalidFeatures += 1;
       continue;
     }
-
-    const rowTimestamp = typeof row.asOfTimestamp === "string"
-      ? row.asOfTimestamp
-      : `${String(row.gameDate || "")}_000000`;
-    const current = map.get(key);
-    const currentTimestamp = current && typeof current.asOfTimestamp === "string"
-      ? current.asOfTimestamp
-      : "";
-    if (!current || rowTimestamp > currentTimestamp) {
-      map.set(key, row);
-    }
+    const current = latest.get(row.gameKey);
+    if (!current || Date.parse(row.asOfTimestamp) > Date.parse(current.asOfTimestamp)) latest.set(row.gameKey, row);
   }
-  return map;
+  const resultMap = new Map();
+  for (const row of results) {
+    if (String(row.league || "kbo").toLowerCase() === "kbo" && row.gameKey) resultMap.set(row.gameKey, row);
+  }
+  const examples = [];
+  for (const result of resultMap.values()) {
+    if (!inRange(result, from, to)) { exclusions.outOfRange += 1; continue; }
+    if (result.completed !== true) { exclusions.incomplete += 1; continue; }
+    if (!Number.isFinite(result.homeScore) || !Number.isFinite(result.awayScore)
+        || result.homeScore < 0 || result.awayScore < 0) { exclusions.invalidScore += 1; continue; }
+    if (result.homeScore === result.awayScore) { exclusions.draw += 1; continue; }
+    const snapshot = latest.get(result.gameKey);
+    if (!snapshot) { exclusions.missingPregameSnapshot += 1; continue; }
+    if (result.gameDate !== snapshot.gameDate) { exclusions.dateMismatch += 1; continue; }
+    examples.push({
+      league: "kbo", gameId: result.gameId, gameKey: result.gameKey, gameDate: result.gameDate,
+      awayTeam: result.awayTeam, homeTeam: result.homeTeam, mode: snapshot.mode,
+      featureSchemaVersion: FEATURE_SCHEMA_VERSION, gameState: snapshot.gameState,
+      gameStartsAt: snapshot.gameStartsAt, asOfTimestamp: snapshot.asOfTimestamp,
+      homeScore: result.homeScore, awayScore: result.awayScore,
+      labelHomeWin: result.homeScore > result.awayScore ? 1 : 0,
+      ...Object.fromEntries(FEATURE_NAMES.map((name) => [name, snapshot.features[name]])),
+    });
+  }
+  examples.sort((a, b) => a.gameDate.localeCompare(b.gameDate) || a.gameKey.localeCompare(b.gameKey));
+  return { examples, summary: { snapshots: snapshots.length, results: results.length,
+    examples: examples.length, exclusions } };
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.marketOdds !== undefined) throw new Error("--marketOdds was removed: schema-2 training uses only archived inference features");
   const snapshotsPath = args.snapshots || path.join(process.cwd(), "data", "prediction_snapshots.ndjson");
   const resultsPath = args.results || path.join(process.cwd(), "data", "game_results.kbo.ndjson");
   const outputPath = args.output || path.join(process.cwd(), "data", "training_examples.kbo.ndjson");
-  const marketOddsPath = args.marketOdds || path.join(process.cwd(), "data", "market_odds.kbo.ndjson");
-
-  const snapshots = (await readNdjson(snapshotsPath)).filter((row) => String(row.league || "kbo").toLowerCase() === "kbo");
-  const results = (await readNdjson(resultsPath)).filter((row) => String(row.league || "kbo").toLowerCase() === "kbo");
-  const marketOddsRows = (await readNdjson(marketOddsPath)).filter((row) => {
-    const league = String(row.league || "kbo").toLowerCase();
-    return league === "kbo";
-  });
-
-  const latestSnapshot = latestSnapshotsByGame(snapshots);
-  const latestMarketOdds = latestMarketOddsByGame(marketOddsRows);
-  const completedResults = results.filter((row) => row.completed === true);
-
-  const examples = [];
-  for (const result of completedResults) {
-    const resultKey = resolveRowGameKey(result);
-    if (!resultKey) {
-      continue;
-    }
-
-    const snapshot = latestSnapshot.get(resultKey);
-    if (!snapshot || !snapshot.features) {
-      continue;
-    }
-
-    const labelHomeWin = result.homeScore > result.awayScore ? 1 : 0;
-    const feat = snapshot.features;
-    const offenseDiff = Number(feat.offenseDiff) || 0;
-    const battingAvgDiff = Number(feat.battingAvgDiff) || 0;
-    const hrPerGameDiff = Number(feat.hrPerGameDiff) || 0;
-    const reconstructed = buildReconstructedMlBattingFeatures({
-      offenseDiff,
-      battingAvgDiff,
-      hrPerGameDiff,
-    });
-
-    const marketHomeWinProbability = null;
-    const marketOddsDiff = 0;
-
-    examples.push({
-      league: "kbo",
-      gameId: result.gameId,
-      gameKey: resultKey,
-      gameDate: result.gameDate,
-      mode: snapshot.mode,
-      labelHomeWin,
-      offenseDiff,
-      defenseDiff: Number(feat.defenseDiff) || 0,
-      starterEraDiff: Number(feat.starterEraDiff) || 0,
-      battingAvgDiff,
-      hrPerGameDiff,
-      runCreationResidualDiff: Number(reconstructed.runCreationResidualDiff) || 0,
-      powerContactMixDiff: Number(reconstructed.powerContactMixDiff) || 0,
-      starterHitsPer9Diff: Number(feat.starterHitsPer9Diff) || 0,
-      starterHrPer9Diff: Number(feat.starterHrPer9Diff) || 0,
-      starterFreePassPer9Diff: Number(feat.starterFreePassPer9Diff) || 0,
-      starterSoPer9Diff: Number(feat.starterSoPer9Diff) || 0,
-      starterRunsPer9Diff: Number(feat.starterRunsPer9Diff) || 0,
-      whipDiff: Number(feat.whipDiff) || 0,
-      bullpenDiff: Number(feat.bullpenDiff) || 0,
-      homeAdvantage: Number(feat.homeAdvantage) || 0,
-      lineupSignal: feat.lineupConfirmed ? 1 : 0,
-      marketHomeWinProbability: Number.isFinite(marketHomeWinProbability)
-        ? Number(marketHomeWinProbability.toFixed(6))
-        : null,
-      marketOddsDiff: Number(marketOddsDiff.toFixed(6)),
-    });
-  }
-
+  const { examples, summary } = buildExamples(await readRows(snapshotsPath), await readRows(resultsPath), args);
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
-  const content = examples.map((row) => JSON.stringify(row)).join("\n") + (examples.length ? "\n" : "");
-  await fs.writeFile(outputPath, content, "utf8");
-  console.log(`built ${examples.length} KBO training examples`);
+  await fs.writeFile(outputPath, examples.map((row) => JSON.stringify(row)).join("\n") + (examples.length ? "\n" : ""), "utf8");
+  console.log(JSON.stringify({ output: outputPath, ...summary }));
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });
+module.exports = { buildExamples, main };

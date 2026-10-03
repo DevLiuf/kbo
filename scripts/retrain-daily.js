@@ -1,221 +1,203 @@
 const fs = require("fs/promises");
 const path = require("path");
 const { spawn } = require("child_process");
+const { parseArgs } = require("./ml-utils");
+const { FEATURE_NAMES } = require("../lib/logistic");
+const { FEATURE_SCHEMA_VERSION } = require("../lib/prediction-contract");
+const {
+  assertDateRange, copyIfPresent, promoteArtifacts, readNdjson,
+  seoulToday, sha256, shiftDate, writeJson,
+} = require("../lib/artifacts");
+const { assertSupportedRuntime } = require("../lib/runtime");
 
-const { parseArgs, readNdjson } = require("./ml-utils");
-
-function formatDate(date) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}${m}${d}`;
+function booleanFlag(value, fallback) {
+  if (value === undefined) return fallback;
+  if (["true", "1", "yes", "on"].includes(String(value).toLowerCase())) return true;
+  if (["false", "0", "no", "off"].includes(String(value).toLowerCase())) return false;
+  throw new Error(`Invalid boolean flag: ${value}`);
 }
 
-function resolveKboOpeningDay(now) {
-  const year = now.getFullYear();
-  const configured = String(process.env.KBO_OPENING_DAY || "").trim();
-  if (/^\d{8}$/.test(configured) && configured.startsWith(String(year))) {
-    return configured;
-  }
-  return `${year}0331`;
+function integerFlag(value, fallback, minimum) {
+  const number = value === undefined ? fallback : Number(value);
+  if (!Number.isInteger(number) || number < minimum) throw new Error(`Invalid integer flag: ${value}`);
+  return number;
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-function parseBooleanFlag(value, fallback = false) {
-  if (value === undefined || value === null || value === "") {
-    return fallback;
-  }
-  const normalized = String(value).trim().toLowerCase();
-  if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
-  if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
-  return fallback;
-}
-
-function runNodeScript(scriptFile, args = []) {
+function runNodeScript(scriptName, args, { cwd, timeoutMs } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [scriptFile, ...args], {
-      cwd: process.cwd(),
-      stdio: "inherit",
+    const child = spawn(process.execPath, [path.join(__dirname, scriptName), ...args], {
+      cwd: cwd || process.cwd(), stdio: "inherit", timeout: timeoutMs || 25 * 60 * 1000,
     });
-
-    child.on("error", reject);
-    child.on("exit", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(new Error(`${path.basename(scriptFile)} exited with code ${code}`));
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0 && !signal) resolve();
+      else reject(new Error(`${scriptName} failed (${signal || `exit ${code}`})`));
     });
   });
 }
 
-async function retry(taskName, attempts, retryDelayMs, fn) {
-  let lastError = null;
+function incrementalFrom(results, from, to, correctionDays) {
+  const completedDates = results.filter((row) => row.completed === true
+    && Number.isFinite(row.homeScore) && Number.isFinite(row.awayScore)
+    && /^\d{8}$/.test(String(row.gameDate)) && String(row.gameDate) <= to)
+    .map((row) => String(row.gameDate)).sort();
+  if (!completedDates.length) return from;
+  const corrected = shiftDate(completedDates[completedDates.length - 1], -correctionDays);
+  return corrected > from ? corrected : from;
+}
 
-  for (let i = 1; i <= attempts; i += 1) {
-    try {
-      console.log(`[daily-retrain] ${taskName} attempt ${i}/${attempts}`);
-      await fn();
-      return;
-    } catch (error) {
-      lastError = error;
-      console.error(`[daily-retrain] ${taskName} failed: ${error.message}`);
-      if (i < attempts) {
-        console.log(`[daily-retrain] waiting ${retryDelayMs}ms before retry`);
-        await sleep(retryDelayMs);
-      }
+function validateTrainedModel(model) {
+  if (!model || model.featureSchemaVersion !== FEATURE_SCHEMA_VERSION || !String(model.version || "").trim()) {
+    throw new Error("Invalid model schema/version");
+  }
+  for (const key of ["intercept", ...FEATURE_NAMES, "plattA", "plattB", "temperature"]) {
+    if (!Number.isFinite(model[key])) throw new Error(`Nonfinite model coefficient: ${key}`);
+  }
+  if (!(model.temperature > 0) || !(model.plattA > 0) || !Number.isInteger(model.trainSamples) || model.trainSamples < 1
+    || !Number.isInteger(model.calibrationSamples) || model.calibrationSamples < 3
+    || !Number.isInteger(model.validSamples) || model.validSamples < 1
+    || model.samples !== model.trainSamples + model.calibrationSamples + model.validSamples) {
+    throw new Error("Invalid independent model sample counts");
+  }
+  const ranges = ["training", "calibration", "validation"].map((name) => {
+    const from = model[`${name}FromGameDate`];
+    const to = model[`${name}ToGameDate`];
+    assertDateRange(from, to);
+    return { from, to };
+  });
+  if (ranges[0].to >= ranges[1].from || ranges[1].to >= ranges[2].from) {
+    throw new Error("Model train/calibration/validation dates overlap");
+  }
+  for (const name of ["train", "calibration", "validation"]) {
+    const metric = model.metrics?.[name];
+    if (!metric || !Number.isInteger(metric.n ?? metric.samples) || (metric.n ?? metric.samples) < 1
+      || !Number.isFinite(metric.logLoss) || metric.logLoss < 0
+      || !Number.isFinite(metric.brier) || metric.brier < 0 || metric.brier > 1
+      || !Number.isFinite(metric.accuracy) || metric.accuracy < 0 || metric.accuracy > 1) {
+      throw new Error(`Invalid independent ${name} metrics`);
     }
   }
-
-  throw lastError;
+  if ((model.metrics.train.n ?? model.metrics.train.samples) !== model.trainSamples
+    || (model.metrics.calibration.n ?? model.metrics.calibration.samples) !== model.calibrationSamples
+    || (model.metrics.validation.n ?? model.metrics.validation.samples) !== model.validSamples) {
+    throw new Error("Model metric/sample counts mismatch");
+  }
+  if (model.metrics.validation.logLoss > Math.log(2) + 1e-12 || model.metrics.validation.brier > 0.25 + 1e-12) {
+    throw new Error("Independent model validation is worse than the coinflip baseline");
+  }
+  return model;
 }
 
-async function writeStatus(statusPath, payload) {
-  await fs.mkdir(path.dirname(statusPath), { recursive: true });
-  await fs.writeFile(statusPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+async function fetchIncrementalResults({ from, to, results, correctionDays, retryCount, retryDelayMs, cwd, timeoutMs }) {
+  const fetchFrom = incrementalFrom(await readNdjson(results, { allowMissing: true }), from, to, correctionDays);
+  for (let attempt = 1; attempt <= retryCount; attempt += 1) {
+    try {
+      await runNodeScript("fetch-results.js", [`--from=${fetchFrom}`, `--to=${to}`, `--output=${results}`], { cwd, timeoutMs });
+      return fetchFrom;
+    } catch (error) {
+      if (attempt === retryCount) throw error;
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
 }
 
 async function main() {
+  assertSupportedRuntime();
   const args = parseArgs(process.argv.slice(2));
-  const league = "kbo";
-
-  const now = new Date();
-  const defaultFrom = resolveKboOpeningDay(now);
-  const defaultTo = formatDate(now);
-
-  const from = args.from || defaultFrom;
-  const to = args.to || defaultTo;
-  const holdoutDays = Number(args.holdoutDays || 3);
-  const retryCount = Number(args.retryCount || 3);
-  const retryDelayMs = Number(args.retryDelayMs || 7000);
-  const minExamples = Number(args.minExamples || 30);
-  const allowInsufficient = parseBooleanFlag(
-    args.allowInsufficient || process.env.KBO_ALLOW_INSUFFICIENT_RETRAIN,
-    false,
-  );
-
-  const resultsPath = path.join(process.cwd(), "data", `game_results.${league}.ndjson`);
-  const examplesPath = path.join(process.cwd(), "data", `training_examples.${league}.ndjson`);
-  const modelPath = path.join(process.cwd(), "data", `model_coefficients.${league}.json`);
-  const modelBackupPath = path.join(process.cwd(), "data", `model_coefficients.${league}.backup.json`);
-  const statusPath = path.join(process.cwd(), "data", `daily_retrain_status.${league}.json`);
-
-  const startedAt = new Date().toISOString();
-  console.log(`[daily-retrain] start league=${league} from=${from} to=${to} holdoutDays=${holdoutDays}`);
-
+  const today = seoulToday();
+  const from = String(args.from || process.env.KBO_OPENING_DAY || `${today.slice(0, 4)}0331`);
+  const to = String(args.to || today);
+  const paths = {
+    results: path.resolve(String(args.results || "data/game_results.kbo.ndjson")),
+    snapshots: path.resolve(String(args.snapshots || "data/prediction_snapshots.ndjson")),
+    examples: path.resolve(String(args.examples || "data/training_examples.kbo.ndjson")),
+    model: path.resolve(String(args.model || "data/model_coefficients.kbo.json")),
+    status: path.resolve(String(args.status || "data/daily_retrain_status.kbo.json")),
+  };
+  const status = { ok: false, skipped: false, league: "kbo", startedAt: new Date().toISOString(), from, to, stage: "configuration" };
+  let staging;
   try {
-    await retry("fetch-results", retryCount, retryDelayMs, async () => {
-      await runNodeScript(path.join("scripts", "fetch-results.js"), [
-        `--from=${from}`,
-        `--to=${to}`,
-        `--output=${resultsPath}`,
-      ]);
-    });
-
-    await runNodeScript(path.join("scripts", "build-training-examples.js"), [
-      `--results=${resultsPath}`,
-      `--output=${examplesPath}`,
-    ]);
-
-    const examples = await readNdjson(examplesPath);
+    assertDateRange(from, to);
+    const holdoutDays = integerFlag(args.holdoutDays, 3, 1);
+    const calibrationDays = integerFlag(args.calibrationDays, 1, 1);
+    const correctionDays = integerFlag(args.correctionDays, 3, 0);
+    const retryCount = integerFlag(args.retryCount, 3, 1);
+    const retryDelayMs = integerFlag(args.retryDelayMs, 7000, 0);
+    const minExamples = integerFlag(args.minExamples, 30, 1);
+    const timeoutMs = integerFlag(args.stageTimeoutMs, 25 * 60 * 1000, 1);
+    Object.assign(status, { holdoutDays, calibrationDays, correctionDays, minExamples });
+    await fs.mkdir(path.dirname(paths.model), { recursive: true });
+    staging = await fs.mkdtemp(path.join(path.dirname(paths.model), ".retrain-"));
+    const stagedResults = path.join(staging, "game_results.kbo.ndjson");
+    const stagedExamples = path.join(staging, "training_examples.kbo.ndjson");
+    const stagedModel = path.join(staging, "model_coefficients.kbo.json");
+    const stagedStatus = path.join(staging, "daily_retrain_status.kbo.json");
+    await copyIfPresent(paths.results, stagedResults);
+    status.stage = "fetch-results";
+    if (booleanFlag(args.fetchResults, true)) {
+      status.fetchFrom = await fetchIncrementalResults({
+        from, to, results: stagedResults, correctionDays, retryCount, retryDelayMs, cwd: staging, timeoutMs,
+      });
+      await promoteArtifacts([{ source: stagedResults, target: paths.results }]);
+    } else {
+      await readNdjson(stagedResults);
+      status.fetchFrom = null;
+    }
+    status.stage = "build-examples";
+    await runNodeScript("build-training-examples.js", [
+      `--results=${stagedResults}`, `--snapshots=${paths.snapshots}`, `--output=${stagedExamples}`,
+      `--from=${from}`, `--to=${to}`,
+    ], { cwd: staging, timeoutMs });
+    const examples = await readNdjson(stagedExamples);
+    status.trainingExamples = examples.length;
     if (examples.length < minExamples) {
-      const message = `insufficient training examples (${examples.length} < ${minExamples}), skip retrain to avoid unstable model`;
-      if (allowInsufficient) {
-        const finishedAt = new Date().toISOString();
-        await writeStatus(statusPath, {
-          ok: true,
-          skipped: true,
-          skipReason: "insufficient_examples",
-          league,
-          startedAt,
-          finishedAt,
-          from,
-          to,
-          holdoutDays,
-          retryCount,
-          retryDelayMs,
-          minExamples,
-          trainingExamples: examples.length,
-          trainingFromGameDate: null,
-          trainingToGameDate: null,
-          message,
-        });
-        console.log(`[daily-retrain] skipped: ${message}`);
-        return;
-      }
-      throw new Error(message);
+      status.skipped = true;
+      status.skipReason = "insufficient_examples";
+      throw new Error(`Insufficient training examples (${examples.length} < ${minExamples})`);
     }
-
-    try {
-      const existing = await fs.readFile(modelPath, "utf8");
-      await fs.writeFile(modelBackupPath, existing, "utf8");
-      console.log(`[daily-retrain] model backup saved to ${modelBackupPath}`);
-    } catch {
-      console.log("[daily-retrain] no previous model to backup");
-    }
-
-    await runNodeScript(path.join("scripts", "train-logistic.js"), [
-      `--input=${examplesPath}`,
-      `--output=${modelPath}`,
-      `--holdoutDays=${holdoutDays}`,
-      `--version=trained-logistic-${league}-${new Date().toISOString().slice(0, 10)}`,
-    ]);
-
-    await runNodeScript(path.join("scripts", "eval-logistic.js"), [
-      `--input=${examplesPath}`,
-      `--model=${modelPath}`,
-    ]);
-
-    const trainedModelRaw = await fs.readFile(modelPath, "utf8");
-    const trainedModel = JSON.parse(trainedModelRaw);
-    const finishedAt = new Date().toISOString();
-    await writeStatus(statusPath, {
-      ok: true,
-      skipped: false,
-      league,
-      startedAt,
-      finishedAt,
-      from,
-      to,
-      holdoutDays,
-      retryCount,
-      retryDelayMs,
-      minExamples,
-      trainingExamples: examples.length,
-      trainingFromGameDate: trainedModel.trainingFromGameDate || null,
-      trainingToGameDate: trainedModel.trainingToGameDate || null,
-      message: "daily retrain completed",
+    status.stage = "train-model";
+    const trainArgs = [
+      `--input=${stagedExamples}`, `--output=${stagedModel}`, `--from=${from}`, `--to=${to}`,
+      `--holdoutDays=${holdoutDays}`, `--calibrationDays=${calibrationDays}`,
+      `--version=trained-logistic-kbo-${new Date().toISOString()}`,
+    ];
+    if (args.epochs !== undefined) trainArgs.push(`--epochs=${integerFlag(args.epochs, 1, 1)}`);
+    await runNodeScript("train-logistic.js", trainArgs, { cwd: staging, timeoutMs });
+    status.stage = "validate-model";
+    const modelBytes = await fs.readFile(stagedModel);
+    const model = validateTrainedModel(JSON.parse(modelBytes));
+    await runNodeScript("eval-logistic.js", [`--input=${stagedExamples}`, `--model=${stagedModel}`], { cwd: staging, timeoutMs });
+    Object.assign(status, {
+      ok: true, skipped: false, stage: "completed", finishedAt: new Date().toISOString(),
+      modelVersion: model.version, modelHash: sha256(modelBytes), featureSchemaVersion: FEATURE_SCHEMA_VERSION,
+      trainingFromGameDate: model.trainingFromGameDate, trainingToGameDate: model.trainingToGameDate,
+      calibrationFromGameDate: model.calibrationFromGameDate, calibrationToGameDate: model.calibrationToGameDate,
+      validationFromGameDate: model.validationFromGameDate, validationToGameDate: model.validationToGameDate,
+      validation: model.metrics.validation,
     });
-    console.log("[daily-retrain] completed");
+    await writeJson(stagedStatus, status);
+    await promoteArtifacts([
+      { source: stagedExamples, target: paths.examples },
+      { source: stagedModel, target: paths.model },
+      { source: stagedStatus, target: paths.status },
+    ]);
+    console.log(JSON.stringify(status, null, 2));
   } catch (error) {
-    const finishedAt = new Date().toISOString();
-    await writeStatus(statusPath, {
-      ok: false,
-      skipped: false,
-      league,
-      startedAt,
-      finishedAt,
-      from,
-      to,
-      holdoutDays,
-      retryCount,
-      retryDelayMs,
-      minExamples,
-      trainingFromGameDate: null,
-      trainingToGameDate: null,
-      error: error.message,
-    });
-    console.error(`[daily-retrain] failed: ${error.message}`);
-    process.exit(1);
+    status.ok = false;
+    status.error = error.message;
+    status.finishedAt = new Date().toISOString();
+    await writeJson(paths.status, status);
+    throw error;
+  } finally {
+    if (staging) await fs.rm(staging, { recursive: true, force: true });
   }
 }
 
-main().catch((error) => {
-  console.error(`[daily-retrain] unexpected: ${error.message}`);
-  process.exit(1);
-});
+module.exports = { booleanFlag, integerFlag, runNodeScript, incrementalFrom, fetchIncrementalResults, validateTrainedModel };
+
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`[daily-retrain] ${error.message}`);
+    process.exitCode = 1;
+  });
+}

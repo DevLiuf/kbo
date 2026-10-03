@@ -1,8 +1,13 @@
+require("./lib/runtime").assertSupportedRuntime();
 const path = require("path");
 const fs = require("fs/promises");
 const express = require("express");
 const cheerio = require("cheerio");
 const { version: APP_VERSION } = require("./package.json");
+const { createHash } = require("crypto");
+const { FEATURE_SCHEMA_VERSION, isPregameSnapshot } = require("./lib/prediction-contract");
+const { DEFAULT_SABER_SETTINGS, validateSaberSettings, blendSaberRuns } = require("./lib/saber");
+const { FEATURE_NAMES, calibratedProbability, validateModel } = require("./lib/logistic");
 
 const {
   DEFAULT_EXPONENT,
@@ -15,11 +20,8 @@ const FETCH_TIMEOUT_MS = 8000;
 const CACHE_TTL_MS = 60 * 1000;
 const EXPECTED_TEAMS = 10;
 const DEFAULT_MODEL_VERSION = "baseline-logistic-shadow-v0.1.0";
-const SNAPSHOT_DIR = path.join(__dirname, "data");
-const SNAPSHOT_FILE = path.join(SNAPSHOT_DIR, "prediction_snapshots.ndjson");
-const MODEL_COEFFICIENTS_FILE = path.join(SNAPSHOT_DIR, "model_coefficients.json");
-const SABER_TUNING_STATUS_FILE = path.join(SNAPSHOT_DIR, "saber_tuning_status.kbo.json");
-const MARKET_ODDS_FILE = path.join(SNAPSHOT_DIR, "market_odds.kbo.ndjson");
+const DATA_DIR = path.resolve(process.env.KBO_DATA_DIR || path.join(__dirname, "data"));
+const SABER_TUNING_STATUS_FILE = path.join(DATA_DIR, "saber_tuning_status.kbo.json");
 
 const DEFAULT_MODEL_COEFFICIENTS = {
   version: DEFAULT_MODEL_VERSION,
@@ -38,12 +40,11 @@ const DEFAULT_MODEL_COEFFICIENTS = {
   bullpenDiff: 0.18,
   homeAdvantage: 1.4,
   lineupSignal: 0.12,
-  marketOddsDiff: 0,
+  lineupWarDiff: 0,
   preLineupShrink: 0.75,
-  blendWeightPost: 0.65,
-  blendWeightPre: 0.45,
   plattA: 1,
   plattB: 0,
+  temperature: 1,
 };
 
 const KBO_HITTER_URL = "https://www.koreabaseball.com/Record/Team/Hitter/Basic1.aspx";
@@ -83,20 +84,14 @@ const STARTER_RELIABILITY_GAMES = 6;
 const STARTER_RELIABILITY_MIN = 0.15;
 const STARTER_RELIABILITY_MAX = 0.9;
 const STARTER_RUN_IMPACT_COEFF = 0.38;
-const LINEUP_WAR_OFFENSE_COEFF = 0.6;
 const LINEUP_WAR_RUN_IMPACT_COEFF = 0.25;
 const SABER_MARKOV_INNINGS = 9;
 const SABER_MONTE_CARLO_INNINGS = 9;
 const SABER_MONTE_CARLO_ITERATIONS = 900;
-const SABER_BLEND_BASE_WEIGHT = 0.7;
-const SABER_BLEND_MARKOV_WEIGHT = 0.25;
-const SABER_BLEND_MONTE_WEIGHT = 0.05;
-const SABER_CLAMP_THRESHOLD = 2.5;
 const BETTING_RECOMMEND_EDGE_MIN = 0.18;
 const BETTING_AVOID_EDGE_MAX = 0.08;
 const BETTING_RECOMMEND_TOTAL_MIN = 7.2;
 const BETTING_AVOID_TOTAL_MAX = 6.9;
-const AWAY_WIN_DECISION_EDGE_MIN = 0.105;
 const SAME_DAY_POLICY_MIN_PROB = 0.9;
 const SAME_DAY_POLICY_MIN_GAP = 0.2;
 const SAME_DAY_POLICY_MIN_RUN_DIFF = 0;
@@ -109,8 +104,6 @@ const POWER_CONTACT_MIX_COEFF = 1.6;
 const CONTACT_PENALTY_MIX_COEFF = 10;
 
 const cachedPayloadByKey = new Map();
-const MARKET_ODDS_CACHE_TTL_MS = 60 * 1000;
-const marketOddsCacheByLeague = new Map();
 
 function normalizeLeague(rawLeague) {
   const league = String(rawLeague || "kbo").trim().toLowerCase();
@@ -118,7 +111,7 @@ function normalizeLeague(rawLeague) {
 }
 
 function getLeagueModelCoefficientsPath(league) {
-  return path.join(SNAPSHOT_DIR, `model_coefficients.${league}.json`);
+  return path.join(DATA_DIR, `model_coefficients.${league}.json`);
 }
 
 function toFiniteNumber(value) {
@@ -142,113 +135,6 @@ function firstFiniteNumber(...values) {
     }
   }
   return null;
-}
-
-function americanOddsToProbability(odds) {
-  const numeric = toFiniteNumber(odds);
-  if (!Number.isFinite(numeric) || numeric === 0) {
-    return null;
-  }
-
-  if (numeric > 0) {
-    return 100 / (numeric + 100);
-  }
-
-  const absValue = Math.abs(numeric);
-  return absValue / (absValue + 100);
-}
-
-function resolveMarketHomeWinProbability(row) {
-  if (!row || typeof row !== "object") {
-    return null;
-  }
-
-  const directHomeProb = toFiniteNumber(row.homeWinProbability ?? row.homeProb ?? row.homeImpliedProb);
-  const directAwayProb = toFiniteNumber(row.awayWinProbability ?? row.awayProb ?? row.awayImpliedProb);
-  if (Number.isFinite(directHomeProb) && Number.isFinite(directAwayProb) && (directHomeProb + directAwayProb) > 0) {
-    const sum = directHomeProb + directAwayProb;
-    return directHomeProb / sum;
-  }
-
-  if (Number.isFinite(directHomeProb)) {
-    return clamp(directHomeProb, 0.01, 0.99);
-  }
-
-  const homeMoneylineProb = americanOddsToProbability(row.homeMoneyline ?? row.homeOdds);
-  const awayMoneylineProb = americanOddsToProbability(row.awayMoneyline ?? row.awayOdds);
-  if (Number.isFinite(homeMoneylineProb) && Number.isFinite(awayMoneylineProb) && (homeMoneylineProb + awayMoneylineProb) > 0) {
-    const sum = homeMoneylineProb + awayMoneylineProb;
-    return homeMoneylineProb / sum;
-  }
-
-  return null;
-}
-
-function resolveMarketOddsGameKey(row) {
-  return String(row && (row.gameKey || row.gameId) || "").trim();
-}
-
-async function loadMarketOddsByLeague(league = "kbo") {
-  const normalizedLeague = normalizeLeague(league) || "kbo";
-  const cache = marketOddsCacheByLeague.get(normalizedLeague);
-  const nowTs = now();
-  if (cache && (nowTs - cache.loadedAt) <= MARKET_ODDS_CACHE_TTL_MS) {
-    return cache.byGameKey;
-  }
-
-  const byGameKey = new Map();
-  try {
-    const raw = await fs.readFile(MARKET_ODDS_FILE, "utf8");
-    const lines = raw.split("\n").map((line) => line.trim()).filter(Boolean);
-    const latestRowByKey = new Map();
-
-    for (const line of lines) {
-      let row;
-      try {
-        row = JSON.parse(line);
-      } catch {
-        continue;
-      }
-
-      const rowLeague = normalizeLeague(row.league || "kbo") || "kbo";
-      if (rowLeague !== normalizedLeague) {
-        continue;
-      }
-
-      const key = resolveMarketOddsGameKey(row);
-      if (!key) {
-        continue;
-      }
-
-      const timestamp = typeof row.asOfTimestamp === "string"
-        ? row.asOfTimestamp
-        : `${String(row.gameDate || "")}_000000`;
-      const current = latestRowByKey.get(key);
-      const currentTimestamp = current && typeof current.asOfTimestamp === "string"
-        ? current.asOfTimestamp
-        : "";
-      if (!current || timestamp > currentTimestamp) {
-        latestRowByKey.set(key, row);
-      }
-    }
-
-    for (const [key, row] of latestRowByKey.entries()) {
-      const homeWinProb = resolveMarketHomeWinProbability(row);
-      if (!Number.isFinite(homeWinProb)) {
-        continue;
-      }
-      byGameKey.set(key, clamp(homeWinProb, 0.01, 0.99));
-    }
-  } catch {
-    // optional market odds file
-  }
-
-  marketOddsCacheByLeague.set(normalizedLeague, {
-    loadedAt: nowTs,
-    byGameKey,
-  });
-
-  return byGameKey;
 }
 
 function now() {
@@ -321,12 +207,7 @@ function parseKboDateTime(dateText, timeText) {
     return null;
   }
 
-  const year = Number(dateText.slice(0, 4));
-  const month = Number(dateText.slice(4, 6)) - 1;
-  const day = Number(dateText.slice(6, 8));
-  const [hour, minute] = timeText.split(":").map(Number);
-
-  return new Date(year, month, day, hour, minute, 0, 0);
+  return new Date(`${dateText.slice(0, 4)}-${dateText.slice(4, 6)}-${dateText.slice(6, 8)}T${timeText}:00+09:00`);
 }
 
 function isLineupConfirmedForGame(game, nowDate) {
@@ -533,46 +414,6 @@ function pickLikelyScoreByWinner({
   };
 }
 
-function sigmoid(x) {
-  return 1 / (1 + Math.exp(-x));
-}
-
-function applyPlattCalibration(logitScore, model) {
-  const a = Number.isFinite(model.plattA) ? model.plattA : 1;
-  const b = Number.isFinite(model.plattB) ? model.plattB : 0;
-  const temperature = Number.isFinite(model.temperature) && model.temperature > 0
-    ? model.temperature
-    : 1;
-  return sigmoid((a * logitScore + b) / temperature);
-}
-
-function stabilizeDecisionProbability(probability, { lineupConfirmed, useSaberHybrid }) {
-  let stabilized = clamp(probability, 0.05, 0.95);
-  const maxSideProb = Math.max(stabilized, 1 - stabilized);
-
-  const lowConfidenceThreshold = 0.6;
-  if (maxSideProb <= lowConfidenceThreshold) {
-    const distanceFromCoinflip = maxSideProb - 0.5;
-    const adjustedDistance = distanceFromCoinflip * 0.85;
-    const adjustedMaxSideProb = 0.5 + adjustedDistance;
-    stabilized = stabilized >= 0.5
-      ? adjustedMaxSideProb
-      : 1 - adjustedMaxSideProb;
-  }
-
-  const overconfidenceThreshold = 0.82;
-  if (lineupConfirmed && useSaberHybrid && maxSideProb > overconfidenceThreshold) {
-    const excess = maxSideProb - overconfidenceThreshold;
-    const compressedExcess = excess * 0.2;
-    const adjustedMaxSideProb = overconfidenceThreshold + compressedExcess;
-    stabilized = stabilized >= 0.5
-      ? adjustedMaxSideProb
-      : 1 - adjustedMaxSideProb;
-  }
-
-  return clamp(stabilized, 0.05, 0.95);
-}
-
 function buildFeatureContributions(featureValues, model) {
   const entries = [
     ["offenseDiff", "팀 득점 (R/G)", featureValues.offenseDiff, model.offenseDiff],
@@ -626,19 +467,13 @@ function buildFeatureContributions(featureValues, model) {
     ["lineupSignal", "라인업 확정", featureValues.lineupSignal, model.lineupSignal],
   ];
 
-  if (Number.isFinite(model.battingAvgDiff)) {
-    entries.push(["battingAvgDiff", "팀 타율 (AVG·legacy)", featureValues.battingAvgDiff, model.battingAvgDiff]);
-  }
-  if (Number.isFinite(model.hrPerGameDiff)) {
-    entries.push(["hrPerGameDiff", "팀 홈런 (HR/G·legacy)", featureValues.hrPerGameDiff, model.hrPerGameDiff]);
-  }
 
   if (Number.isFinite(featureValues.lineupWarDiff) && featureValues.lineupSignal === 1) {
     entries.push([
       "lineupWarDiff",
       "라인업 WAR 평균",
       featureValues.lineupWarDiff,
-      LINEUP_WAR_OFFENSE_COEFF,
+      model.lineupWarDiff,
     ]);
   }
 
@@ -659,33 +494,6 @@ function buildFeatureContributions(featureValues, model) {
   return contributions;
 }
 
-async function persistPredictionSnapshots({ asOfTimestamp, date, league, predictions }) {
-  if (!Array.isArray(predictions) || predictions.length === 0) {
-    return;
-  }
-
-  await fs.mkdir(SNAPSHOT_DIR, { recursive: true });
-
-  const rows = predictions.map((prediction) => JSON.stringify({
-    asOfTimestamp,
-    league,
-    gameDate: date,
-    gameId: prediction.gameId,
-    gameKey: prediction.gameKey || prediction.gameId,
-    modelVersion: prediction.modelVersion || DEFAULT_MODEL_VERSION,
-    mode: prediction.mode,
-    lineupConfirmed: prediction.lineupConfirmed,
-    homeWinProbability: prediction.homeWinProbability,
-    awayWinProbability: prediction.awayWinProbability,
-    predictedHomeScore: prediction.predictedHomeScore,
-    predictedAwayScore: prediction.predictedAwayScore,
-    predictedWinner: prediction.predictedWinner,
-    features: prediction.modelFeatures,
-  })).join("\n") + "\n";
-
-  await fs.appendFile(SNAPSHOT_FILE, rows, "utf8");
-}
-
 async function loadModelCoefficients(league = "kbo") {
   const normalizedLeague = normalizeLeague(league) || "kbo";
   const normalizeModel = (parsed) => {
@@ -699,8 +507,6 @@ async function loadModelCoefficients(league = "kbo") {
       "homeAdvantage",
       "lineupSignal",
       "preLineupShrink",
-      "blendWeightPost",
-      "blendWeightPre",
       "plattA",
       "plattB",
     ];
@@ -711,27 +517,13 @@ async function loadModelCoefficients(league = "kbo") {
       }
     }
 
-    const hasReconstructed = Number.isFinite(parsed.runCreationResidualDiff)
-      && Number.isFinite(parsed.powerContactMixDiff);
-    const hasLegacy = Number.isFinite(parsed.battingAvgDiff)
-      && Number.isFinite(parsed.hrPerGameDiff);
-
-    if (!hasReconstructed && !hasLegacy) {
+    if (!Number.isFinite(parsed.runCreationResidualDiff) || !Number.isFinite(parsed.powerContactMixDiff)) {
       return null;
     }
-
-    const normalized = {
-      ...parsed,
-      defenseDiff: parsed.defenseDiff,
-      runCreationResidualDiff: hasReconstructed ? parsed.runCreationResidualDiff : 0,
-      powerContactMixDiff: hasReconstructed ? parsed.powerContactMixDiff : 0,
-      starterHitsPer9Diff: Number.isFinite(parsed.starterHitsPer9Diff) ? parsed.starterHitsPer9Diff : 0,
-      starterHrPer9Diff: Number.isFinite(parsed.starterHrPer9Diff) ? parsed.starterHrPer9Diff : 0,
-      starterFreePassPer9Diff: Number.isFinite(parsed.starterFreePassPer9Diff) ? parsed.starterFreePassPer9Diff : 0,
-      starterSoPer9Diff: Number.isFinite(parsed.starterSoPer9Diff) ? parsed.starterSoPer9Diff : 0,
-      starterRunsPer9Diff: Number.isFinite(parsed.starterRunsPer9Diff) ? parsed.starterRunsPer9Diff : 0,
-      marketOddsDiff: Number.isFinite(parsed.marketOddsDiff) ? parsed.marketOddsDiff : 0,
-    };
+    if (parsed.featureSchemaVersion === FEATURE_SCHEMA_VERSION && !validateModel(parsed)) return null;
+    if (FEATURE_NAMES.some((name) => name !== "lineupWarDiff" && !Number.isFinite(parsed[name]))) return null;
+    if (!Number.isFinite(parsed.temperature) || parsed.temperature <= 0) return null;
+    const normalized = { ...parsed };
 
     if (typeof normalized.version !== "string" || normalized.version.length === 0) {
       normalized.version = DEFAULT_MODEL_COEFFICIENTS.version;
@@ -744,7 +536,8 @@ async function loadModelCoefficients(league = "kbo") {
     try {
       const raw = await fs.readFile(filePath, "utf8");
       const parsed = JSON.parse(raw);
-      return normalizeModel(parsed);
+      const model = normalizeModel(parsed);
+      return model ? { ...model, modelHash: createHash("sha256").update(raw).digest("hex") } : null;
     } catch {
       return null;
     }
@@ -756,14 +549,10 @@ async function loadModelCoefficients(league = "kbo") {
       return leagueModel;
     }
 
-    const legacyModel = await tryLoadModelFromPath(MODEL_COEFFICIENTS_FILE);
-    if (legacyModel) {
-      return legacyModel;
-    }
 
-    return DEFAULT_MODEL_COEFFICIENTS;
+    return { ...DEFAULT_MODEL_COEFFICIENTS, modelHash: null };
   } catch {
-    return DEFAULT_MODEL_COEFFICIENTS;
+    return { ...DEFAULT_MODEL_COEFFICIENTS, modelHash: null };
   }
 }
 
@@ -771,12 +560,25 @@ async function loadSaberTuningStatus() {
   try {
     const raw = await fs.readFile(SABER_TUNING_STATUS_FILE, "utf8");
     const parsed = JSON.parse(raw);
+    const validated = parsed.featureSchemaVersion === FEATURE_SCHEMA_VERSION
+      && parsed.sampleSize > 0 && parsed.validationSamples > 0
+      && Number.isFinite(parsed.validationMae) && Number.isFinite(parsed.defaultValidationMae)
+      && parsed.validationMae <= parsed.defaultValidationMae + 1e-12
+      && validateSaberSettings(parsed.best);
+    const settings = validated ? {
+      baseWeight: parsed.best.baseWeight,
+      markovWeight: parsed.best.markovWeight,
+      monteWeight: parsed.best.monteWeight,
+      clampThreshold: parsed.best.clampThreshold,
+    } : DEFAULT_SABER_SETTINGS;
     return {
       tunedAt: typeof parsed.tunedAt === "string" ? parsed.tunedAt : null,
-      rangeFrom: typeof parsed.rangeFrom === "string" ? parsed.rangeFrom : null,
-      rangeTo: typeof parsed.rangeTo === "string" ? parsed.rangeTo : null,
+      rangeFrom: parsed.rangeFrom || null,
+      rangeTo: parsed.rangeTo || null,
       sampleSize: Number.isFinite(parsed.sampleSize) ? parsed.sampleSize : null,
-      best: parsed.best && typeof parsed.best === "object" ? parsed.best : null,
+      settings,
+      settingsSource: validated ? "validated_tuning" : "default",
+      settingsHash: createHash("sha256").update(JSON.stringify(settings)).digest("hex"),
     };
   } catch {
     return {
@@ -784,7 +586,9 @@ async function loadSaberTuningStatus() {
       rangeFrom: null,
       rangeTo: null,
       sampleSize: null,
-      best: null,
+      settings: DEFAULT_SABER_SETTINGS,
+      settingsSource: "default",
+      settingsHash: createHash("sha256").update(JSON.stringify(DEFAULT_SABER_SETTINGS)).digest("hex"),
     };
   }
 }
@@ -2111,6 +1915,7 @@ function predictGames(teamRows, gameList, homeAdvantage, options = {}) {
         homePitcherId: game.B_PIT_P_ID,
         gameDate: game.G_DT,
         gameTime: game.G_TM,
+        gameStartsAt: parseKboDateTime(game.G_DT, game.G_TM)?.toISOString() || null,
         stadium: game.S_NM,
         gameState: game.GAME_STATE_SC,
         awayTeam: away.team,
@@ -2203,6 +2008,7 @@ async function buildKboPredictionsForDate({
   includeFinished,
   includeLiveGames,
   modelCoefficients,
+  saberSettings,
 }) {
   const normalizedDate = await getGameDate(date);
   const gameList = await getGameList(normalizedDate.NOW_G_DT);
@@ -2258,7 +2064,6 @@ async function buildKboPredictionsForDate({
   }));
 
   const withStarterEra = await enrichPredictionsWithStarterEra(withLineupHitterMetrics);
-  const marketOddsByGameKey = await loadMarketOddsByLeague("kbo");
 
   const predictions = applySameDayEdgePolicy(
     enrichPredictionsWithScoreModel(
@@ -2267,7 +2072,7 @@ async function buildKboPredictionsForDate({
       homeAdvantage,
       modelCoefficients,
       "kbo",
-      marketOddsByGameKey,
+      saberSettings,
     ).sort(
       (a, b) => Math.max(b.homeWinProbability, b.awayWinProbability) - Math.max(a.homeWinProbability, a.awayWinProbability),
     ),
@@ -2286,6 +2091,7 @@ async function buildPredictionsForDate({
   includeFinished,
   includeLiveGames,
   modelCoefficients,
+  saberSettings,
 }) {
   return buildKboPredictionsForDate({
     date,
@@ -2294,6 +2100,7 @@ async function buildPredictionsForDate({
     includeFinished,
     includeLiveGames,
     modelCoefficients,
+    saberSettings,
   });
 }
 
@@ -2631,7 +2438,7 @@ async function enrichPredictionsWithStarterEra(predictions) {
   return enriched;
 }
 
-function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, modelCoefficients, league = "kbo", marketOddsByGameKey = new Map()) {
+function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, modelCoefficients, league = "kbo", saberSettings = DEFAULT_SABER_SETTINGS) {
   const teamMap = new Map(teamRows.map((row) => [row.team, row]));
   const leagueRunsPerGame = getLeagueRunsPerGame(teamRows);
   const homeFieldRunBonus = homeAdvantage * 4.5;
@@ -3204,8 +3011,6 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
     const starterSoPer9Diff = starterSoPer9RawDiff * starterEraReliability;
     const starterRunsPer9Diff = starterRunsPer9RawDiff * starterEraReliability;
     const lineupSignal = prediction.lineupConfirmed ? 1 : 0;
-    const marketHomeWinProbability = null;
-    const marketOddsDiff = 0;
 
     const awayLineupWar = getLineupWarSummary(prediction.awayLineup);
     const homeLineupWar = getLineupWarSummary(prediction.homeLineup);
@@ -3253,60 +3058,12 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       lineupWarDiff,
     };
 
-    const lineupWarLinearAdj = lineupSignal === 1
-      ? featureValues.lineupWarDiff * LINEUP_WAR_OFFENSE_COEFF
-      : 0;
-    const useReconstructedMlFeatures = Number.isFinite(model.runCreationResidualDiff)
-      && Number.isFinite(model.powerContactMixDiff);
-
-    const mlLinear =
-      model.intercept
-      + (featureValues.offenseDiff * model.offenseDiff)
-      + (featureValues.defenseDiff * model.defenseDiff)
-      + (featureValues.starterEraDiff * model.starterEraDiff)
-      + (useReconstructedMlFeatures
-        ? (featureValues.runCreationResidualDiff * model.runCreationResidualDiff)
-          + (featureValues.powerContactMixDiff * model.powerContactMixDiff)
-        : (featureValues.battingAvgDiff * (Number(model.battingAvgDiff) || 0))
-          + (featureValues.hrPerGameDiff * (Number(model.hrPerGameDiff) || 0)))
-      + (featureValues.starterHitsPer9Diff * (Number(model.starterHitsPer9Diff) || 0))
-      + (featureValues.starterHrPer9Diff * (Number(model.starterHrPer9Diff) || 0))
-      + (featureValues.starterFreePassPer9Diff * (Number(model.starterFreePassPer9Diff) || 0))
-      + (featureValues.starterSoPer9Diff * (Number(model.starterSoPer9Diff) || 0))
-      + (featureValues.starterRunsPer9Diff * (Number(model.starterRunsPer9Diff) || 0))
-      + (featureValues.whipDiff * model.whipDiff)
-      + (featureValues.bullpenDiff * model.bullpenDiff)
-      + (featureValues.homeAdvantage * model.homeAdvantage)
-      + (featureValues.lineupSignal * model.lineupSignal)
-      + lineupWarLinearAdj;
-    const calibratedMlProb = applyPlattCalibration(mlLinear, model);
-    const mlHomeWinProbability = clamp(calibratedMlProb, 0.005, 0.995);
+    const mlHomeWinProbability = calibratedProbability(model, featureValues);
     const mlAwayWinProbability = 1 - mlHomeWinProbability;
 
-    const blendWeight = prediction.lineupConfirmed ? model.blendWeightPost : model.blendWeightPre;
-    const blendedHomeWinProbability =
-      (heuristicHomeWinProbability * (1 - blendWeight)) + (mlHomeWinProbability * blendWeight);
-
-    let decisionHomeWinProbability = mlHomeWinProbability;
-    if (!prediction.lineupConfirmed) {
-      const preLineupMix = 0.7;
-      const sampleCount = Number.isFinite(model.samples) ? model.samples : null;
-      const dataReliability = sampleCount === null ? 1 : clamp(sampleCount / 40, 0.35, 1);
-      const effectivePreLineupShrink = clamp(model.preLineupShrink * dataReliability, 0.2, 0.85);
-      decisionHomeWinProbability =
-        (mlHomeWinProbability * preLineupMix)
-        + (blendedHomeWinProbability * (1 - preLineupMix));
-      decisionHomeWinProbability =
-        0.5 + (decisionHomeWinProbability - 0.5) * effectivePreLineupShrink;
-    }
-    let finalHomeWinProbability = stabilizeDecisionProbability(
-      clamp(decisionHomeWinProbability, 0.05, 0.95),
-      {
-        lineupConfirmed: prediction.lineupConfirmed,
-        useSaberHybrid,
-      },
-    );
-    let finalAwayWinProbability = 1 - finalHomeWinProbability;
+    const preLineupShrink = prediction.lineupConfirmed ? 1 : clamp(model.preLineupShrink, 0, 1);
+    const finalHomeWinProbability = 0.5 + (mlHomeWinProbability - 0.5) * preLineupShrink;
+    const finalAwayWinProbability = 1 - finalHomeWinProbability;
 
     let expectedAwayRuns = (awayRates.offenseRpg + homeRates.defenseRpg) / 2;
     let expectedHomeRuns = (homeRates.offenseRpg + awayRates.defenseRpg) / 2;
@@ -3337,6 +3094,8 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
 
     expectedAwayRuns = clamp(expectedAwayRuns, 1.2, 10.5);
     expectedHomeRuns = clamp(expectedHomeRuns, 1.2, 10.5);
+    const baselineAwayRuns = expectedAwayRuns;
+    const baselineHomeRuns = expectedHomeRuns;
 
     let markovAwayRuns = null;
     let markovHomeRuns = null;
@@ -3367,64 +3126,21 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       homeScoreAtLeastOneProb = monteCarlo.homeScoreAtLeastOneProb;
       monteCarloTotalOver85Prob = monteCarlo.totalOver85Prob;
 
-      const awayMarkovDiff = Math.abs(markovAwayRuns - expectedAwayRuns);
-      const awayMonteDiff = Math.abs(monteCarloAwayRuns - expectedAwayRuns);
-      const homeMarkovDiff = Math.abs(markovHomeRuns - expectedHomeRuns);
-      const homeMonteDiff = Math.abs(monteCarloHomeRuns - expectedHomeRuns);
-      const awayMarkovTrusted = awayMarkovDiff <= SABER_CLAMP_THRESHOLD;
-      const awayMonteTrusted = awayMonteDiff <= SABER_CLAMP_THRESHOLD;
-      const homeMarkovTrusted = homeMarkovDiff <= SABER_CLAMP_THRESHOLD;
-      const homeMonteTrusted = homeMonteDiff <= SABER_CLAMP_THRESHOLD;
-
-      saberExpectedAwayRuns = clamp(
-        (expectedAwayRuns * SABER_BLEND_BASE_WEIGHT)
-          + ((awayMarkovTrusted ? markovAwayRuns : expectedAwayRuns) * SABER_BLEND_MARKOV_WEIGHT)
-          + ((awayMonteTrusted ? monteCarloAwayRuns : expectedAwayRuns) * SABER_BLEND_MONTE_WEIGHT),
-        1.2,
-        10.5,
-      );
-      saberExpectedHomeRuns = clamp(
-        (expectedHomeRuns * SABER_BLEND_BASE_WEIGHT)
-          + ((homeMarkovTrusted ? markovHomeRuns : expectedHomeRuns) * SABER_BLEND_MARKOV_WEIGHT)
-          + ((homeMonteTrusted ? monteCarloHomeRuns : expectedHomeRuns) * SABER_BLEND_MONTE_WEIGHT),
-        1.2,
-        10.5,
-      );
+      saberExpectedAwayRuns = blendSaberRuns(baselineAwayRuns, markovAwayRuns, monteCarloAwayRuns, saberSettings);
+      saberExpectedHomeRuns = blendSaberRuns(baselineHomeRuns, markovHomeRuns, monteCarloHomeRuns, saberSettings);
 
       expectedAwayRuns = saberExpectedAwayRuns;
       expectedHomeRuns = saberExpectedHomeRuns;
     }
 
-    const runModelHomeWinProbability = clamp(
-      0.5 + ((expectedHomeRuns - expectedAwayRuns) / 10),
-      0.05,
-      0.95,
-    );
-    const runModelGap = Math.abs(finalHomeWinProbability - finalAwayWinProbability);
-    const runModelBlendWeight = prediction.lineupConfirmed && useSaberHybrid && runModelGap < 0.08
-      ? 0.08
-      : 0;
-
-    finalHomeWinProbability = clamp(
-      (finalHomeWinProbability * (1 - runModelBlendWeight))
-      + (runModelHomeWinProbability * runModelBlendWeight),
-      0.05,
-      0.95,
-    );
-    finalAwayWinProbability = 1 - finalHomeWinProbability;
-
-    const roundedAwayRuns = roundToOne(expectedAwayRuns);
-    const roundedHomeRuns = roundToOne(expectedHomeRuns);
     const targetRunDiff = getTargetRunDiff(
       finalHomeWinProbability,
       finalAwayWinProbability,
       prediction.lineupConfirmed,
     );
 
-    const awayEdge = finalAwayWinProbability - finalHomeWinProbability;
-    const predictedWinner = awayEdge > AWAY_WIN_DECISION_EDGE_MIN
-      ? prediction.awayTeam
-      : prediction.homeTeam;
+    const predictedWinner = finalHomeWinProbability >= finalAwayWinProbability
+      ? prediction.homeTeam : prediction.awayTeam;
 
     const likelyScore = pickLikelyScoreByWinner({
       awayLambda: expectedAwayRuns,
@@ -3440,8 +3156,8 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
     let predictedHomeScore = likelyScore.homeScore;
 
     const scoreDiff = Math.abs(predictedHomeScore - predictedAwayScore);
-    let winProbGap = Math.abs(finalHomeWinProbability - finalAwayWinProbability);
-    let maxSideWinProbability = Math.max(finalHomeWinProbability, finalAwayWinProbability);
+    const winProbGap = Math.abs(finalHomeWinProbability - finalAwayWinProbability);
+    const maxSideWinProbability = Math.max(finalHomeWinProbability, finalAwayWinProbability);
     const expectedTotalRuns = expectedAwayRuns + expectedHomeRuns;
     const totalBand = expectedTotalRuns <= BETTING_AVOID_TOTAL_MAX
       ? "low_total"
@@ -3454,7 +3170,6 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       && strongEdgePrecisionGate;
     const eliteEdgeGate = strongEdgeGate
       && prediction.lineupConfirmed
-      && runModelBlendWeight === 0
       && totalBand === "mid_total";
 
     const edgeBand = winProbGap < BETTING_AVOID_EDGE_MAX
@@ -3468,14 +3183,6 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
         ? "elite_edge"
         : edgeBand;
 
-    if (edgeBand === "strong_edge") {
-      const homeFavored = finalHomeWinProbability >= finalAwayWinProbability;
-      const forcedProb = edgeTier === "elite_edge" ? 0.92 : 0.9;
-      finalHomeWinProbability = homeFavored ? forcedProb : (1 - forcedProb);
-      finalAwayWinProbability = 1 - finalHomeWinProbability;
-      winProbGap = Math.abs(finalHomeWinProbability - finalAwayWinProbability);
-      maxSideWinProbability = Math.max(finalHomeWinProbability, finalAwayWinProbability);
-    }
 
     let bettingTag = "주의";
     let bettingReason = "중간 엣지 구간, 보수 접근 권장";
@@ -3501,9 +3208,6 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       } else if (scoreDiff < 4) {
         bettingTag = "주의";
         bettingReason = "강한 우세지만 점수차 신호가 약해 보수 접근";
-      } else if (runModelBlendWeight > 0) {
-        bettingTag = "주의";
-        bettingReason = "승패모형과 득점모형 불일치로 보수 접근";
       } else {
         bettingTag = "추천";
         bettingReason = "강한 승률 엣지 + 점수차 신호 우세";
@@ -3528,17 +3232,15 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       decisionBasis: "ml_centered",
       heuristicHomeWinProbability: Number(heuristicHomeWinProbability.toFixed(3)),
       heuristicAwayWinProbability: Number(heuristicAwayWinProbability.toFixed(3)),
-      blendedHomeWinProbability: Number(blendedHomeWinProbability.toFixed(3)),
-      blendedAwayWinProbability: Number((1 - blendedHomeWinProbability).toFixed(3)),
-      mlHomeWinProbability: Number(mlHomeWinProbability.toFixed(3)),
-      mlAwayWinProbability: Number(mlAwayWinProbability.toFixed(3)),
-      homeWinProbability: Number(finalHomeWinProbability.toFixed(3)),
-      awayWinProbability: Number(finalAwayWinProbability.toFixed(3)),
-      maxWinProbability: Number(Math.max(finalHomeWinProbability, finalAwayWinProbability).toFixed(3)),
-      winProbGap: Number(winProbGap.toFixed(3)),
+      mlHomeWinProbability,
+      mlAwayWinProbability,
+      homeWinProbability: finalHomeWinProbability,
+      awayWinProbability: finalAwayWinProbability,
+      maxWinProbability: maxSideWinProbability,
+      winProbGap,
       predictedWinner,
-      expectedAwayRuns: roundedAwayRuns,
-      expectedHomeRuns: roundedHomeRuns,
+      expectedAwayRuns,
+      expectedHomeRuns,
       predictedAwayScore,
       predictedHomeScore,
       predictedRunDiff: scoreDiff,
@@ -3552,6 +3254,13 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
       predictionNote: note,
       featureContributions,
       topContributors: featureContributions.slice(0, 3),
+      featureSchemaVersion: FEATURE_SCHEMA_VERSION,
+      features: featureValues,
+      scoreModelInputs: {
+        baselineAwayRuns, baselineHomeRuns, markovAwayRuns, markovHomeRuns,
+        monteCarloAwayRuns, monteCarloHomeRuns, saberApplied: useSaberHybrid,
+      },
+      signalKind: "matchup_strength",
       modelFeatures: {
         awayOffenseRpg: roundToOne(awayRates.offenseRpg),
         awayDefenseRpg: roundToOne(awayRates.defenseRpg),
@@ -3658,13 +3367,9 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
           ? roundToThree(toFiniteRateNumber(firstFiniteNumber(toFiniteNumber(homeStarterProfileData?.obpAllowed ?? homeStarterProfileData?.opponentObp ?? homeStarterProfileData?.oppObp ?? homeStarterProfileData?.obp), toFiniteNumber(prediction.homeStarterObp))))
           : null,
         lineupConfirmed: prediction.lineupConfirmed,
-        marketHomeWinProbability: Number.isFinite(marketHomeWinProbability)
-          ? roundToThree(marketHomeWinProbability)
-          : null,
-        marketOddsDiff: roundToThree(marketOddsDiff),
+        baselineAwayRuns,
+        baselineHomeRuns,
         saberApplied: useSaberHybrid,
-        runModelHomeWinProbability: roundToThree(runModelHomeWinProbability),
-        runModelBlendWeight: roundToThree(runModelBlendWeight),
         winProbGap: roundToThree(winProbGap),
         expectedTotalRuns: roundToThree(expectedTotalRuns),
         edgeBand,
@@ -3688,6 +3393,29 @@ function enrichPredictionsWithScoreModel(predictions, teamRows, homeAdvantage, m
 }
 
 app.use(express.static(path.join(__dirname, "public")));
+
+app.get("/api/model/status", async (_req, res) => {
+  try {
+    const [model, saber] = await Promise.all([loadModelCoefficients(), loadSaberTuningStatus()]);
+    res.set("Cache-Control", "no-store").json({
+      appVersion: APP_VERSION,
+      featureSchemaVersion: FEATURE_SCHEMA_VERSION,
+      modelVersion: model.version,
+      modelHash: model.modelHash,
+      modelTrainedAt: model.trainedAt || null,
+      modelFeatureSchemaVersion: model.featureSchemaVersion || null,
+      modelValidationIndependent: Boolean(model.validationRange && model.calibrationRange),
+      status: model.modelHash && model.featureSchemaVersion === FEATURE_SCHEMA_VERSION ? "ready" : "unverified_model",
+      saberSettings: saber.settings,
+      saberSettingsHash: saber.settingsHash,
+      saberSettingsSource: saber.settingsSource,
+      saberTunedAt: saber.tunedAt,
+    });
+  } catch (error) {
+    console.error("Failed to load model status", error);
+    res.status(503).json({ error: "Model status unavailable." });
+  }
+});
 
 app.get("/api/teams/pythagorean", async (req, res) => {
   const requestedLeague = String(req.query.league || "kbo").trim().toLowerCase();
@@ -3751,7 +3479,6 @@ app.get("/api/predictions/gameday", async (req, res) => {
   }
   const league = "kbo";
 
-  const asOfTimestamp = new Date().toISOString();
   const date =
     typeof req.query.date === "string" && /^\d{8}$/.test(req.query.date)
       ? req.query.date
@@ -3767,7 +3494,6 @@ app.get("/api/predictions/gameday", async (req, res) => {
   }
 
   try {
-    const season = Number(date.slice(0, 4)) || new Date().getFullYear();
     const teamRows = await loadTeamRowsByLeague(league, DEFAULT_EXPONENT);
     const modelCoefficients = await loadModelCoefficients(league);
     const saberTuningStatus = await loadSaberTuningStatus();
@@ -3785,6 +3511,7 @@ app.get("/api/predictions/gameday", async (req, res) => {
       includeFinished,
       includeLiveGames: keepTodayGamesVisible,
       modelCoefficients,
+      saberSettings: saberTuningStatus.settings,
     });
 
     if (!includeFinished && predictions.length === 0 && allowNextDateFallback) {
@@ -3798,6 +3525,7 @@ app.get("/api/predictions/gameday", async (req, res) => {
           includeFinished,
           includeLiveGames: false,
           modelCoefficients,
+          saberSettings: saberTuningStatus.settings,
         });
 
         fallbackDepth += 1;
@@ -3816,22 +3544,26 @@ app.get("/api/predictions/gameday", async (req, res) => {
       }
     }
 
-    try {
-      await persistPredictionSnapshots({
-        asOfTimestamp,
-        date: normalizedDate.NOW_G_DT,
-        league,
-        predictions,
-      });
-    } catch (snapshotError) {
-      console.error("Failed to persist prediction snapshots", snapshotError);
-    }
+    const asOfTimestamp = new Date().toISOString();
+    predictions = predictions.map((prediction) => ({
+      ...prediction,
+      asOfTimestamp,
+      trainingEligible: isPregameSnapshot({ ...prediction, asOfTimestamp }),
+    }));
 
     res.json({
       asOfTimestamp,
       league,
       appVersion: APP_VERSION,
       modelVersion: modelCoefficients.version,
+      modelHash: modelCoefficients.modelHash,
+      featureSchemaVersion: FEATURE_SCHEMA_VERSION,
+      modelFeatureSchemaVersion: modelCoefficients.featureSchemaVersion || null,
+      modelValidationIndependent: Boolean(modelCoefficients.validationRange && modelCoefficients.calibrationRange),
+      saberSettings: saberTuningStatus.settings,
+      saberSettingsHash: saberTuningStatus.settingsHash,
+      saberSettingsSource: saberTuningStatus.settingsSource,
+      signalKind: "matchup_strength",
       modelTrainedAt: typeof modelCoefficients.trainedAt === "string" ? modelCoefficients.trainedAt : null,
       modelTrainingRange: modelCoefficients.trainingFromGameDate && modelCoefficients.trainingToGameDate
         ? {

@@ -1,298 +1,128 @@
 const fs = require("fs/promises");
 const path = require("path");
+const { parseArgs } = require("./ml-utils");
+const { FEATURE_SCHEMA_VERSION } = require("../lib/prediction-contract");
+const { FEATURE_NAMES, linearScore, calibratedProbability, sigmoid, readRows,
+  eligibleExamples, rowRange, evaluateRows, validateModel } = require("../lib/logistic");
 
-const { parseArgs, readNdjson, sigmoid } = require("./ml-utils");
-
-function dot(weights, x) {
-  let sum = weights.intercept;
-  sum += weights.offenseDiff * x.offenseDiff;
-  sum += weights.defenseDiff * x.defenseDiff;
-  sum += weights.starterEraDiff * x.starterEraDiff;
-  sum += weights.runCreationResidualDiff * x.runCreationResidualDiff;
-  sum += weights.powerContactMixDiff * x.powerContactMixDiff;
-  sum += weights.starterHitsPer9Diff * x.starterHitsPer9Diff;
-  sum += weights.starterHrPer9Diff * x.starterHrPer9Diff;
-  sum += weights.starterFreePassPer9Diff * x.starterFreePassPer9Diff;
-  sum += weights.starterSoPer9Diff * x.starterSoPer9Diff;
-  sum += weights.starterRunsPer9Diff * x.starterRunsPer9Diff;
-  sum += weights.whipDiff * x.whipDiff;
-  sum += weights.bullpenDiff * x.bullpenDiff;
-  sum += weights.homeAdvantage * x.homeAdvantage;
-  sum += weights.lineupSignal * x.lineupSignal;
-  return sum;
-}
-
-function normalizeRow(row) {
-  return {
-    ...row,
-    runCreationResidualDiff: Number(row.runCreationResidualDiff) || 0,
-    powerContactMixDiff: Number(row.powerContactMixDiff) || 0,
-    starterHitsPer9Diff: Number(row.starterHitsPer9Diff) || 0,
-    starterHrPer9Diff: Number(row.starterHrPer9Diff) || 0,
-    starterFreePassPer9Diff: Number(row.starterFreePassPer9Diff) || 0,
-    starterSoPer9Diff: Number(row.starterSoPer9Diff) || 0,
-    starterRunsPer9Diff: Number(row.starterRunsPer9Diff) || 0,
-  };
-}
-
-function boundedProb(prob) {
-  return Math.max(1e-9, Math.min(1 - 1e-9, prob));
-}
-
-function splitByDate(rows, holdoutDays) {
-  const uniqueDates = [...new Set(rows.map((row) => String(row.gameDate)))].sort();
-  if (uniqueDates.length <= 1) {
-    const splitIndex = Math.max(1, Math.floor(rows.length * 0.8));
-    return {
-      trainRows: rows.slice(0, splitIndex),
-      validRows: rows.slice(splitIndex),
-    };
+function splitByDate(rows, holdoutDays = 1, calibrationDays = 1) {
+  if (!Number.isInteger(holdoutDays) || holdoutDays < 1
+      || !Number.isInteger(calibrationDays) || calibrationDays < 1) {
+    throw new Error("holdoutDays and calibrationDays must be positive integers");
   }
-
-  const holdoutCount = Math.max(1, Math.min(holdoutDays, uniqueDates.length - 1));
-  const validSet = new Set(uniqueDates.slice(-holdoutCount));
-  const trainRows = rows.filter((row) => !validSet.has(String(row.gameDate)));
-  const validRows = rows.filter((row) => validSet.has(String(row.gameDate)));
-  return { trainRows, validRows };
+  const dates = [...new Set(rows.map((row) => row.gameDate))].sort();
+  if (dates.length <= holdoutDays + calibrationDays) {
+    throw new Error("Insufficient dates for independent chronological train/calibration/test windows");
+  }
+  const testFrom = dates[dates.length - holdoutDays];
+  const calibrationFrom = dates[dates.length - holdoutDays - calibrationDays];
+  const trainRows = rows.filter((row) => row.gameDate < calibrationFrom);
+  const calibrationRows = rows.filter((row) => row.gameDate >= calibrationFrom && row.gameDate < testFrom);
+  const testRows = rows.filter((row) => row.gameDate >= testFrom);
+  if (!trainRows.length || !testRows.length || calibrationRows.length < 3
+      || new Set(calibrationRows.map((row) => row.labelHomeWin)).size !== 2) {
+    throw new Error("Need nonempty train/test and at least 3 independent calibration examples with both labels");
+  }
+  return { trainRows, calibrationRows, testRows };
 }
 
-function fitPlatt(logits, labels, epochs = 1200, lr = 0.01, l2 = 0.0001) {
-  if (logits.length === 0 || labels.length !== logits.length) {
-    return { plattA: 1, plattB: 0 };
-  }
-
+function fitCalibration(model, rows, epochs) {
+  const logits = rows.map((row) => linearScore(model, row));
   let a = 1;
   let b = 0;
-
   for (let epoch = 0; epoch < epochs; epoch += 1) {
     let gradA = 0;
     let gradB = 0;
-
-    for (let i = 0; i < logits.length; i += 1) {
-      const z = a * logits[i] + b;
-      const p = sigmoid(z);
-      const e = p - labels[i];
-      gradA += e * logits[i];
-      gradB += e;
+    for (let i = 0; i < rows.length; i += 1) {
+      const error = sigmoid(a * logits[i] + b) - rows[i].labelHomeWin;
+      gradA += error * logits[i];
+      gradB += error;
     }
-
-    const n = logits.length;
-    a -= lr * (gradA / n + l2 * a);
-    b -= lr * (gradB / n + l2 * b);
+    // A positive slope calibrates confidence without reversing the learned feature direction.
+    a = Math.max(0.01, a - 0.01 * (gradA / rows.length + 0.0001 * a));
+    b -= 0.01 * (gradB / rows.length + 0.0001 * b);
   }
-
-  return { plattA: a, plattB: b };
-}
-
-function calibratedProbFromRaw(raw, platt, temperature) {
-  const safeTemp = Number.isFinite(temperature) && temperature > 0 ? temperature : 1;
-  const calibrated = sigmoid((platt.plattA * raw + platt.plattB) / safeTemp);
-  return boundedProb(calibrated);
-}
-
-function fitTemperature(logits, labels, platt) {
-  if (logits.length < 5 || labels.length !== logits.length) {
-    return 1;
-  }
-
-  let bestTemp = 1;
-  let bestLoss = Number.POSITIVE_INFINITY;
-
-  for (let temp = 1.0; temp <= 2.5; temp += 0.05) {
+  model.plattA = a;
+  model.plattB = b;
+  let bestLoss = Infinity;
+  let bestTemperature = 1;
+  for (let step = 0; step <= 30; step += 1) {
+    model.temperature = 1 + step * 0.05;
     let loss = 0;
-    for (let i = 0; i < logits.length; i += 1) {
-      const p = calibratedProbFromRaw(logits[i], platt, temp);
-      loss += -(labels[i] * Math.log(p) + (1 - labels[i]) * Math.log(1 - p));
+    for (const row of rows) {
+      const p = calibratedProbability(model, row);
+      loss -= row.labelHomeWin * Math.log(p) + (1 - row.labelHomeWin) * Math.log(1 - p);
     }
-
-    const avgLoss = loss / logits.length;
-    if (avgLoss < bestLoss) {
-      bestLoss = avgLoss;
-      bestTemp = temp;
-    }
+    if (loss < bestLoss) { bestLoss = loss; bestTemperature = model.temperature; }
   }
-
-  return bestTemp;
+  model.temperature = bestTemperature;
 }
 
-function metrics(rows, weights, platt, temperature) {
-  if (rows.length === 0) {
-    return { logLoss: null, accuracy: null, brier: null };
-  }
-
-  let loss = 0;
-  let brier = 0;
-  let correct = 0;
-  for (const row of rows) {
-    const raw = dot(weights, row);
-    const p = calibratedProbFromRaw(raw, platt, temperature);
-    loss += -(row.labelHomeWin * Math.log(p) + (1 - row.labelHomeWin) * Math.log(1 - p));
-    brier += (p - row.labelHomeWin) ** 2;
-    const pred = p >= 0.5 ? 1 : 0;
-    if (pred === row.labelHomeWin) {
-      correct += 1;
+function trainModel(inputRows, options = {}) {
+  const rows = eligibleExamples(inputRows, options.from, options.to);
+  const epochs = Number(options.epochs ?? 2000);
+  const learningRate = Number(options.lr ?? 0.02);
+  const l2 = Number(options.l2 ?? 0.0005);
+  const holdoutDays = Number(options.holdoutDays ?? 1);
+  const calibrationDays = Number(options.calibrationDays ?? 1);
+  if (!Number.isInteger(epochs) || epochs < 1 || !Number.isFinite(learningRate) || learningRate <= 0
+      || !Number.isFinite(l2) || l2 < 0) throw new Error("Invalid training hyperparameters");
+  const { trainRows, calibrationRows, testRows } = splitByDate(rows, holdoutDays, calibrationDays);
+  const model = { featureSchemaVersion: FEATURE_SCHEMA_VERSION, intercept: 0, plattA: 1, plattB: 0, temperature: 1 };
+  for (const name of FEATURE_NAMES) model[name] = 0;
+  const gradients = Object.fromEntries(FEATURE_NAMES.map((name) => [name, 0]));
+  for (let epoch = 0; epoch < epochs; epoch += 1) {
+    let interceptGradient = 0;
+    for (const name of FEATURE_NAMES) gradients[name] = 0;
+    for (const row of trainRows) {
+      const error = sigmoid(linearScore(model, row)) - row.labelHomeWin;
+      interceptGradient += error;
+      for (const name of FEATURE_NAMES) gradients[name] += error * row[name];
+    }
+    model.intercept -= learningRate * (interceptGradient / trainRows.length + l2 * model.intercept);
+    for (const name of FEATURE_NAMES) {
+      model[name] -= learningRate * (gradients[name] / trainRows.length + l2 * model[name]);
     }
   }
-
-  return {
-    logLoss: loss / rows.length,
-    brier: brier / rows.length,
-    accuracy: correct / rows.length,
-  };
+  fitCalibration(model, calibrationRows, epochs);
+  if (!validateModel(model)) throw new Error("Training produced nonfinite model coefficients");
+  const trainingRange = rowRange(trainRows);
+  const calibrationRange = rowRange(calibrationRows);
+  const validationRange = rowRange(testRows);
+  Object.assign(model, {
+    version: options.version || `trained-logistic-${new Date().toISOString()}`,
+    trainedAt: new Date().toISOString(), samples: rows.length, trainSamples: trainRows.length,
+    calibrationSamples: calibrationRows.length, validSamples: testRows.length,
+    holdoutDays, calibrationDays, trainingRange, calibrationRange, validationRange,
+    trainingFromGameDate: trainingRange.from, trainingToGameDate: trainingRange.to,
+    calibrationFromGameDate: calibrationRange.from, calibrationToGameDate: calibrationRange.to,
+    validationFromGameDate: validationRange.from, validationToGameDate: validationRange.to,
+    preLineupShrink: 0.75,
+    metrics: { train: evaluateRows(model, trainRows), calibration: evaluateRows(model, calibrationRows),
+      validation: evaluateRows(model, testRows) },
+  });
+  for (const metric of Object.values(model.metrics)) {
+    metric.n = metric.samples;
+    if (![metric.logLoss, metric.brier, metric.accuracy].every(Number.isFinite)) {
+      throw new Error("Training produced invalid metrics");
+    }
+  }
+  return model;
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const input = args.input || path.join(process.cwd(), "data", "training_examples.ndjson");
-  const output = args.output || path.join(process.cwd(), "data", "model_coefficients.json");
-  const version = args.version || `trained-logistic-${new Date().toISOString().slice(0, 10)}`;
-  const epochs = Number(args.epochs || 2000);
-  const learningRate = Number(args.lr || 0.02);
-  const l2 = Number(args.l2 || 0.0005);
-  const holdoutDays = Number(args.holdoutDays || 1);
-
-  const rows = (await readNdjson(input)).map(normalizeRow);
-  if (rows.length < 5) {
-    throw new Error("Need at least 5 labeled examples in training_examples.ndjson");
-  }
-
-  rows.sort((a, b) => String(a.gameDate).localeCompare(String(b.gameDate)));
-  const gameDates = rows
-    .map((row) => String(row.gameDate || "").trim())
-    .filter((gameDate) => /^\d{8}$/.test(gameDate))
-    .sort();
-  const trainingFromGameDate = gameDates[0] || null;
-  const trainingToGameDate = gameDates.length > 0 ? gameDates[gameDates.length - 1] : null;
-  const { trainRows, validRows } = splitByDate(rows, holdoutDays);
-
-  const w = {
-    intercept: -0.18,
-    offenseDiff: 0.42,
-    defenseDiff: 0.29,
-    starterEraDiff: 0.11,
-    runCreationResidualDiff: 0.28,
-    powerContactMixDiff: 0.22,
-    starterHitsPer9Diff: 0.08,
-    starterHrPer9Diff: 0.12,
-    starterFreePassPer9Diff: 0.1,
-    starterSoPer9Diff: 0.06,
-    starterRunsPer9Diff: 0.14,
-    whipDiff: 0.24,
-    bullpenDiff: 0.18,
-    homeAdvantage: 1.4,
-    lineupSignal: 0.12,
-  };
-
-  for (let epoch = 0; epoch < epochs; epoch += 1) {
-    const g = {
-      intercept: 0,
-      offenseDiff: 0,
-      defenseDiff: 0,
-      starterEraDiff: 0,
-      runCreationResidualDiff: 0,
-      powerContactMixDiff: 0,
-      starterHitsPer9Diff: 0,
-      starterHrPer9Diff: 0,
-      starterFreePassPer9Diff: 0,
-      starterSoPer9Diff: 0,
-      starterRunsPer9Diff: 0,
-      whipDiff: 0,
-      bullpenDiff: 0,
-      homeAdvantage: 0,
-      lineupSignal: 0,
-    };
-
-    for (const row of trainRows) {
-      const p = sigmoid(dot(w, row));
-      const e = p - row.labelHomeWin;
-      g.intercept += e;
-      g.offenseDiff += e * row.offenseDiff;
-      g.defenseDiff += e * row.defenseDiff;
-      g.starterEraDiff += e * row.starterEraDiff;
-      g.runCreationResidualDiff += e * row.runCreationResidualDiff;
-      g.powerContactMixDiff += e * row.powerContactMixDiff;
-      g.starterHitsPer9Diff += e * row.starterHitsPer9Diff;
-      g.starterHrPer9Diff += e * row.starterHrPer9Diff;
-      g.starterFreePassPer9Diff += e * row.starterFreePassPer9Diff;
-      g.starterSoPer9Diff += e * row.starterSoPer9Diff;
-      g.starterRunsPer9Diff += e * row.starterRunsPer9Diff;
-      g.whipDiff += e * row.whipDiff;
-      g.bullpenDiff += e * row.bullpenDiff;
-      g.homeAdvantage += e * row.homeAdvantage;
-      g.lineupSignal += e * row.lineupSignal;
-    }
-
-    const n = Math.max(1, trainRows.length);
-    w.intercept -= learningRate * (g.intercept / n + l2 * w.intercept);
-    w.offenseDiff -= learningRate * (g.offenseDiff / n + l2 * w.offenseDiff);
-    w.defenseDiff -= learningRate * (g.defenseDiff / n + l2 * w.defenseDiff);
-    w.starterEraDiff -= learningRate * (g.starterEraDiff / n + l2 * w.starterEraDiff);
-    w.runCreationResidualDiff -= learningRate * (g.runCreationResidualDiff / n + l2 * w.runCreationResidualDiff);
-    w.powerContactMixDiff -= learningRate * (g.powerContactMixDiff / n + l2 * w.powerContactMixDiff);
-    w.starterHitsPer9Diff -= learningRate * (g.starterHitsPer9Diff / n + l2 * w.starterHitsPer9Diff);
-    w.starterHrPer9Diff -= learningRate * (g.starterHrPer9Diff / n + l2 * w.starterHrPer9Diff);
-    w.starterFreePassPer9Diff -= learningRate * (g.starterFreePassPer9Diff / n + l2 * w.starterFreePassPer9Diff);
-    w.starterSoPer9Diff -= learningRate * (g.starterSoPer9Diff / n + l2 * w.starterSoPer9Diff);
-    w.starterRunsPer9Diff -= learningRate * (g.starterRunsPer9Diff / n + l2 * w.starterRunsPer9Diff);
-    w.whipDiff -= learningRate * (g.whipDiff / n + l2 * w.whipDiff);
-    w.bullpenDiff -= learningRate * (g.bullpenDiff / n + l2 * w.bullpenDiff);
-    w.homeAdvantage -= learningRate * (g.homeAdvantage / n + l2 * w.homeAdvantage);
-    w.lineupSignal -= learningRate * (g.lineupSignal / n + l2 * w.lineupSignal);
-  }
-
-  const logits = validRows.map((row) => dot(w, row));
-  const labels = validRows.map((row) => row.labelHomeWin);
-  const platt = validRows.length >= 3 ? fitPlatt(logits, labels) : { plattA: 1, plattB: 0 };
-  const temperature = fitTemperature(logits, labels, platt);
-
-  const trainMetric = metrics(trainRows, w, platt, temperature);
-  const validMetric = metrics(validRows, w, platt, temperature);
-
-  const model = {
-    version,
-    trainedAt: new Date().toISOString(),
-    samples: rows.length,
-    trainSamples: trainRows.length,
-    validSamples: validRows.length,
-    trainingFromGameDate,
-    trainingToGameDate,
-    holdoutDays,
-    intercept: Number(w.intercept.toFixed(6)),
-    offenseDiff: Number(w.offenseDiff.toFixed(6)),
-    defenseDiff: Number(w.defenseDiff.toFixed(6)),
-    starterEraDiff: Number(w.starterEraDiff.toFixed(6)),
-    runCreationResidualDiff: Number(w.runCreationResidualDiff.toFixed(6)),
-    powerContactMixDiff: Number(w.powerContactMixDiff.toFixed(6)),
-    starterHitsPer9Diff: Number(w.starterHitsPer9Diff.toFixed(6)),
-    starterHrPer9Diff: Number(w.starterHrPer9Diff.toFixed(6)),
-    starterFreePassPer9Diff: Number(w.starterFreePassPer9Diff.toFixed(6)),
-    starterSoPer9Diff: Number(w.starterSoPer9Diff.toFixed(6)),
-    starterRunsPer9Diff: Number(w.starterRunsPer9Diff.toFixed(6)),
-    whipDiff: Number(w.whipDiff.toFixed(6)),
-    bullpenDiff: Number(w.bullpenDiff.toFixed(6)),
-    homeAdvantage: Number(w.homeAdvantage.toFixed(6)),
-    lineupSignal: Number(w.lineupSignal.toFixed(6)),
-    marketOddsDiff: 0,
-    preLineupShrink: 0.75,
-    blendWeightPost: 0.65,
-    blendWeightPre: 0.45,
-    plattA: Number(platt.plattA.toFixed(6)),
-    plattB: Number(platt.plattB.toFixed(6)),
-    temperature: Number(temperature.toFixed(6)),
-    metrics: {
-      train: trainMetric,
-      validation: validMetric,
-    },
-  };
-
+  const input = args.input || path.join(process.cwd(), "data", "training_examples.kbo.ndjson");
+  const output = args.output || path.join(process.cwd(), "data", "model_coefficients.kbo.json");
+  const model = trainModel(await readRows(input), args);
   await fs.mkdir(path.dirname(output), { recursive: true });
-  await fs.writeFile(output, `${JSON.stringify(model, null, 2)}\n`, "utf8");
-
-  console.log("saved model:", output);
-  console.log("validation:", model.metrics.validation);
+  const temporary = `${output}.${process.pid}.tmp`;
+  try {
+    await fs.writeFile(temporary, `${JSON.stringify(model, null, 2)}\n`, "utf8");
+    await fs.rename(temporary, output);
+  } finally { await fs.rm(temporary, { force: true }); }
+  console.log(JSON.stringify({ output, version: model.version, metrics: model.metrics }));
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });
+module.exports = { splitByDate, trainModel, main };

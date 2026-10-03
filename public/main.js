@@ -186,19 +186,26 @@ function renderModelStatus(payload) {
     return;
   }
 
-  const mlLatest = formatCompactDate(payload?.modelLatestGameDate);
+  const mlTrained = formatCompactDate(payload?.modelTrainedAt);
   const mlRange = payload?.modelTrainingRange?.from && payload?.modelTrainingRange?.to
     ? `${formatCompactDate(payload.modelTrainingRange.from)}~${formatCompactDate(payload.modelTrainingRange.to)}`
     : "-";
+  const saberTuned = formatCompactDate(payload?.saberTunedAt);
   const saberRange = payload?.saberTuningRange?.from && payload?.saberTuningRange?.to
     ? `${formatCompactDate(payload.saberTuningRange.from)}~${formatCompactDate(payload.saberTuningRange.to)}`
     : "-";
   const appVersion = String(payload?.appVersion || "-").trim() || "-";
+  const mlValidation = payload?.modelValidationIndependent ? "독립 검증 모델" : "검증 미확인 모델";
+  const settings = payload?.saberSettings;
+  const settingsLabel = settings
+    ? `${settings.baseWeight}/${settings.markovWeight}/${settings.monteWeight} · clamp ${settings.clampThreshold}`
+    : "-";
+  const settingsSource = payload?.saberSettingsSource === "validated_tuning" ? "검증 튜닝 적용" : "기본 설정 적용";
 
   modelStatusRow.innerHTML = `
     <span class="model-status-pill app"><span class="model-status-label">웹 버전</span><span class="model-status-value">v${appVersion}</span></span>
-    <span class="model-status-pill ml"><span class="model-status-label">ML 학습 경기일</span><span class="model-status-value">${mlLatest}</span><span class="model-status-range">(${mlRange})</span></span>
-    <span class="model-status-pill saber"><span class="model-status-label">세이버 튜닝 경기일</span><span class="model-status-value">${saberRange}</span></span>
+    <span class="model-status-pill ml"><span class="model-status-label">ML 최근 학습</span><span class="model-status-value">${mlTrained}</span><span class="model-status-range">${mlValidation} · 학습데이터 ${mlRange}</span></span>
+    <span class="model-status-pill saber"><span class="model-status-label">세이버 설정</span><span class="model-status-value">${settingsSource}</span><span class="model-status-range">${escapeHtml(settingsLabel)} · 최근 튜닝 ${saberTuned} (${saberRange})</span></span>
   `;
 }
 
@@ -825,12 +832,12 @@ function renderDailyPredictions(payload) {
           <div class="daily-scoreline">${isPreLineup ? "잠정 스코어" : "예상 스코어"}: ${game.awayTeam} ${game.predictedAwayScore} : ${game.predictedHomeScore} ${game.homeTeam}</div>
           <div class="daily-gap">예상 점수차: ${game.predictedWinner} ${game.predictedRunDiff?.toFixed(1) ?? "-"}점 우세</div>
           <div class="daily-model-meta">
-            <div class="meta-row"><span class="meta-tag">최종 결정확률</span><span>원정 ${awayProb} / 홈 ${homeProb}</span></div>
+            <div class="meta-row"><span class="meta-tag">승부 판단확률</span><span>원정 ${awayProb} / 홈 ${homeProb}</span></div>
             <div class="meta-row"><span class="meta-tag alt">순수 ML확률</span><span>원정 ${mlAwayProb} / 홈 ${mlHomeProb}</span></div>
             ${saberExtraMetaRows}
           </div>
           <div class="daily-card-footer">
-            ${bettingReason ? `<div class="daily-bet-reason">베팅 시그널: ${bettingReason}</div>` : ""}
+            ${bettingReason ? `<div class="daily-bet-reason">승부 우세 신호: ${escapeHtml(bettingReason)} · 배당 대비 수익 추천이 아닙니다.</div>` : ""}
             ${actualResultBlock}
             <div class="daily-winner">예상 승리팀: <strong>${game.predictedWinner}</strong> <span class="confidence">(${confidence})</span> ${hitBadge}</div>
             <div class="daily-note">${game.predictionNote || (isPreLineup ? "라인업 발표 전으로 최근 라인업 기준입니다." : "금일 라인업 기준입니다.")}</div>

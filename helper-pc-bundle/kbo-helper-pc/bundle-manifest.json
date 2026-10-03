@@ -1,0 +1,109 @@
+{
+  "version": "1.2.0",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "d33c7a82e4db00021f04220b9e31d3eb75f03e49c2b150b8641cef9bbb82ca18"
+    },
+    {
+      "path": "lib/artifacts.js",
+      "sha256": "70cb725fb9eacddb1d093d2577b9eea172a907f8c2ac056c756f8a1f70f61335"
+    },
+    {
+      "path": "lib/backtest.js",
+      "sha256": "3db26a1cd6813fdfd93511130fd4d6d8f4fbbc74e01cc64537d1f4a18a216656"
+    },
+    {
+      "path": "lib/logistic.js",
+      "sha256": "a1483925992b34c06bbdb268285d22c97ac4c37e7cca53905f5c9c4dcbad2b6c"
+    },
+    {
+      "path": "lib/prediction-contract.js",
+      "sha256": "e23b09abe27d5f37a76eea466bfc701b94e09e03e1b394ea38ac681cd83857d4"
+    },
+    {
+      "path": "lib/pythagorean.js",
+      "sha256": "c8a24301b30b834f53f054a7a4d5c2c7cfbed1648810886a81a8df6eff6a0c46"
+    },
+    {
+      "path": "lib/runtime.js",
+      "sha256": "d8b5b61e8d5f02c3d8c737b2b1507bd2505cbf10a935c68e2e36d8072bcca7a5"
+    },
+    {
+      "path": "lib/saber.js",
+      "sha256": "3d33198d4148c00571b765698464af89892fe8cfed22c3e0ca297bbecee40fc6"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "4dcf9037ec6dd6b12d4ed39f7e1712971e20109c22cb83747e952559d8e2d3ef"
+    },
+    {
+      "path": "package.json",
+      "sha256": "f2f70a70993fad0a306bcfbd447dcdb5fe3e18d8b3e99aae26bf2cdaffac761e"
+    },
+    {
+      "path": "quick-train-tune.bat",
+      "sha256": "3a804ac91dcf852002a755cd483dcfad654c94929ea4a5f88a65d5fd9891dffd"
+    },
+    {
+      "path": "scripts/backfill-snapshots.js",
+      "sha256": "3d57d9f4bad2d97479bcf1c9846e94c539f5ba77af21683c231b769c0e6e535a"
+    },
+    {
+      "path": "scripts/build-training-examples.js",
+      "sha256": "285d5a0672aba038d003e766f9271638af8959bbeff150135cece7b7b7fd1a66"
+    },
+    {
+      "path": "scripts/eval-logistic.js",
+      "sha256": "be168689386ab1a90a44e6c827b964f464aff686b2d26b018a6f94291320504a"
+    },
+    {
+      "path": "scripts/evaluate-selective-coverage.js",
+      "sha256": "dee06e1cb8c006b550d0d83d010cdb1fedf393c17e902b7fa96a3b09e4f9da2e"
+    },
+    {
+      "path": "scripts/export-betting-tag-profitability.js",
+      "sha256": "fdb81f2d2ace4c0c4bef123c6c470e4d10159027f5a4cb66645aa83cf957d747"
+    },
+    {
+      "path": "scripts/export-saber-backtest-details.js",
+      "sha256": "f1abd8dadb6b082961127c2fac309e31056e501f4558d8fbb6bd12e0ee4734ca"
+    },
+    {
+      "path": "scripts/fetch-results.js",
+      "sha256": "5a185fa89652b9829b23ed1f3b6c5cc4552992a362e9db222f9dd96deea194ad"
+    },
+    {
+      "path": "scripts/helper-pc-train-and-tune.js",
+      "sha256": "d48c2a21d24febc7d3f200aefe3a046f6dbb020e3800d5dcf47a0f1125f23a24"
+    },
+    {
+      "path": "scripts/ml-utils.js",
+      "sha256": "b6815a4c821aac535099d0596e1b4a54fc9a17bed2c860ee0fc8a73c3f34f923"
+    },
+    {
+      "path": "scripts/retrain-daily.js",
+      "sha256": "c2ecaafbd8b776b3bb9dffcc74d51bff3154abb2ed4b1a0ace89275647f96e70"
+    },
+    {
+      "path": "scripts/search-selective-policy.js",
+      "sha256": "a0ab8fcebc63b5c65f02d61a999b56d7a2081f7170af08a468f4ec45afcfaae4"
+    },
+    {
+      "path": "scripts/train-logistic.js",
+      "sha256": "d0958baa8b65cd940ea83fafcd6cf6bfb87ef808fe75d81777602c5821affde4"
+    },
+    {
+      "path": "scripts/tune-confidence-compression.js",
+      "sha256": "66c0c6144ade5448b14d73fa6c009917c9a80a8ce61695d668cd98152eb9c6d0"
+    },
+    {
+      "path": "scripts/tune-saber-weights.js",
+      "sha256": "81c47e2af259c366fae251fb47e421f16fd8f2369d8ddd436caf692fcd4b05e2"
+    },
+    {
+      "path": "scripts/walk-forward-eval.js",
+      "sha256": "1c49036e75fc45b383d7fe8ec4a61e61544cd615c2576f938827654c05ba142d"
+    }
+  ]
+}
