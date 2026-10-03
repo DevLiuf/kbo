@@ -159,18 +159,20 @@ test("offline helper promotes independently validated count model and exact hash
   assert.equal((await readNdjson(path.join(directory, "examples.ndjson"))).filter((row) => row.homeScore === row.awayScore).length, 12);
 });
 
-test("collect-only helper preserves model and archives bootstrap count observations", async (t) => {
+test("first collect-only run needs no results file and archives only the 30-minute window without replacing the model", async (t) => {
   const directory = await temporary(t);
   const today = seoulToday();
   const row = snapshot(today, "new");
-  await fs.writeFile(path.join(directory, "results.ndjson"), "");
+  row.asOfTimestamp = new Date(Date.parse(row.gameStartsAt) - 30 * 60000).toISOString();
+  const tooEarly = snapshot(today, "too-early", { asOfTimestamp: new Date(Date.parse(row.gameStartsAt) - 30 * 60000 - 1).toISOString() });
   await fs.writeFile(path.join(directory, "model.json"), '{"version":"legacy-user-artifact"}\n');
-  const baseUrl = await fixtureServer(t, (_req, res) => res.end(JSON.stringify({ date: today, asOfTimestamp: row.asOfTimestamp, predictions: [row] })));
-  const result = await cli("helper-pc-train-and-tune.js", [`--from=${today}`, `--baseUrl=${baseUrl}`, "--fetchResults=false", "--collectOnly=true", "--autoPush=true",
+  const baseUrl = await fixtureServer(t, (_req, res) => res.end(JSON.stringify({ date: today, asOfTimestamp: row.asOfTimestamp, predictions: [tooEarly, row] })));
+  const result = await cli("helper-pc-train-and-tune.js", [`--from=${today}`, `--baseUrl=${baseUrl}`, "--fetchResults=false", "--collectOnly=true", "--autoPush=true", "--pregameWindowMinutes=30",
     "--snapshots=snapshots.ndjson", "--results=results.ndjson", "--model=model.json", "--status=helper.json"], directory);
   assert.equal(result.code, 0, result.stderr);
   assert.equal(await fs.readFile(path.join(directory, "model.json"), "utf8"), '{"version":"legacy-user-artifact"}\n');
   assert.deepEqual((await readNdjson(path.join(directory, "snapshots.ndjson")))[0].modelInputs, row.modelInputs);
+  assert.deepEqual((await readNdjson(path.join(directory, "snapshots.ndjson"))).map((saved) => saved.gameKey), ["new"]);
   assert.equal(JSON.parse(await fs.readFile(path.join(directory, "helper.json"), "utf8")).deployment.state, "not_deployed");
 });
 

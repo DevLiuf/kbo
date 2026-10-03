@@ -46,6 +46,8 @@ async function main() {
   const snapshotsPath = path.resolve(String(args.output || args.snapshots || "data/prediction_snapshots.ndjson"));
   const timeoutMs = Number(args.timeoutMs || 15000);
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new Error("--timeoutMs must be a positive integer");
+  const windowMinutes = args.pregameWindowMinutes === undefined ? null : Number(args.pregameWindowMinutes);
+  if (windowMinutes !== null && (!Number.isInteger(windowMinutes) || windowMinutes < 1)) throw new Error("--pregameWindowMinutes must be a positive integer");
   const summary = { requestedDates: 0, successDates: 0, predictionRows: 0, writtenRows: 0, failedDates: 0 };
   if (to < today) {
     console.log(JSON.stringify({ from, to, snapshotsPath, skipped: true, reason: "historical_collection_forbidden", summary }));
@@ -83,6 +85,7 @@ async function main() {
           if (!validateInputs(row.modelInputs)) {
             throw new Error("Invalid confirmed-lineup modelInputs");
           }
+          if (windowMinutes !== null && Date.parse(row.gameStartsAt) - Date.parse(row.asOfTimestamp) > windowMinutes * 60000) continue;
           collected.push(row);
         } else if (prediction.trainingEligible === true) throw new Error("Invalid eligible pregame prediction");
       }

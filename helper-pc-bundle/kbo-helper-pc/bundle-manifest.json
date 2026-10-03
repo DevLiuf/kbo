@@ -1,9 +1,9 @@
 {
-  "version": "2.0.1",
+  "version": "2.1.0",
   "files": [
     {
       "path": "README.md",
-      "sha256": "5c86d52a8c592e8c7daba35d5f247252826791ab227e874202e4876baccff3d8"
+      "sha256": "00241db4249930c27b913aa3280f4520d75610ddf475fe1773c2cfbe2dca84f0"
     },
     {
       "path": "lib/artifacts.js",
@@ -35,19 +35,23 @@
     },
     {
       "path": "package-lock.json",
-      "sha256": "688c1269f572f176faf997ccadae48a764f0901c694b17f2a58d38033ceb03b7"
+      "sha256": "1e8bd8a8236a06c7996ef43c5f5f06e63b8125f84781ea0035d0f72b65acb0b9"
     },
     {
       "path": "package.json",
-      "sha256": "17d8c36c4005319861d738b7ff614baaaee2bffef06c76c6723dabc0d1cb994c"
+      "sha256": "c53815548a91e87a9c287dc17d71f9c3b539eccdb2d789999fa128546d05ad75"
     },
     {
       "path": "quick-train-tune.bat",
       "sha256": "3a804ac91dcf852002a755cd483dcfad654c94929ea4a5f88a65d5fd9891dffd"
     },
     {
+      "path": "scripts/auto-collect-pregame.js",
+      "sha256": "fea53d48e80383c00dfe895ab1831e185252e71197d975d8e4157f3adff22a67"
+    },
+    {
       "path": "scripts/backfill-snapshots.js",
-      "sha256": "734abc409280aece91c9aea7add9b73f23df0cc945f450cb7f35d10dc8198301"
+      "sha256": "920d72485d89633586a5aefd2f7dc582524933e300ae346c08e64027df8fa488"
     },
     {
       "path": "scripts/build-training-examples.js",
@@ -67,7 +71,7 @@
     },
     {
       "path": "scripts/helper-pc-train-and-tune.js",
-      "sha256": "2686e7a2f2bba0f426145b4921c5b3f7903afadf6ff37128112a7db9e6cabd30"
+      "sha256": "30cfcc83aee1971c4a81aab6aaef9a1f7b975cc8ff25fc06848ef87fdf7bf3e5"
     },
     {
       "path": "scripts/ml-utils.js",

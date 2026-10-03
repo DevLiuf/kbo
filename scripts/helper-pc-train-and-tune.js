@@ -173,6 +173,7 @@ async function main() {
       await runNodeScript("backfill-snapshots.js", [
         `--from=${today}`, `--to=${to}`, `--baseUrl=${baseUrl}`,
         `--output=${staged.snapshots}`, `--timeoutMs=${httpTimeoutMs}`,
+        ...(args.pregameWindowMinutes === undefined ? [] : [`--pregameWindowMinutes=${args.pregameWindowMinutes}`]),
       ], { cwd: staging, timeoutMs });
       const collectedArchive = await readNdjson(staged.snapshots, { allowMissing: true });
       status.snapshotRowsCollected = collectedArchive.filter((row) => !previousSnapshots.has(JSON.stringify(row))).length;
@@ -190,7 +191,7 @@ async function main() {
       });
       await promoteArtifacts([{ source: staged.results, target: paths.results }]);
     } else {
-      await readNdjson(staged.results);
+      if (!collectOnly) await readNdjson(staged.results);
       status.fetchFrom = null;
     }
     if (collectOnly) {
