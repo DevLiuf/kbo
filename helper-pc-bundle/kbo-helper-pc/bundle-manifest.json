@@ -1,9 +1,9 @@
 {
-  "version": "2.0.0",
+  "version": "2.0.1",
   "files": [
     {
       "path": "README.md",
-      "sha256": "d9b836f6db3d2b95ea963da889a1255c465c78de826bb7bd2c3c2e5b78327789"
+      "sha256": "5c86d52a8c592e8c7daba35d5f247252826791ab227e874202e4876baccff3d8"
     },
     {
       "path": "lib/artifacts.js",
@@ -35,11 +35,11 @@
     },
     {
       "path": "package-lock.json",
-      "sha256": "8db918972336929c3acbe132e11d59bf311695da46de193a0df9c8faa566c2de"
+      "sha256": "688c1269f572f176faf997ccadae48a764f0901c694b17f2a58d38033ceb03b7"
     },
     {
       "path": "package.json",
-      "sha256": "39502e63ae0ead35e06f77ee3b3ff4b9eb53aa08abc1392152657ee70537816a"
+      "sha256": "17d8c36c4005319861d738b7ff614baaaee2bffef06c76c6723dabc0d1cb994c"
     },
     {
       "path": "quick-train-tune.bat",

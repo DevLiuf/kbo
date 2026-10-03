@@ -16,6 +16,10 @@ npm start
 
 브라우저에서 `http://localhost:3000`에 접속합니다. HTML 파일을 직접 열면 API를 사용할 수 없습니다.
 
+### 2.0.1 의존성 보안 수정
+
+간접 의존성을 `body-parser 2.3.0`, `qs 6.16.0`, `undici 7.30.0`으로 갱신했습니다. Git 코드를 갱신한 뒤 `npm ci`로 동일한 잠금파일을 설치하세요. `whatwg-encoding`의 deprecated 안내는 설치 실패나 취약점 진단과 별개이며 남아 있을 수 있습니다. `npm audit`로 현재 취약점을 확인하고, 미니PC에서 임의로 `npm audit fix --force`를 실행하지 마세요.
+
 ## 예측 모델과 화면의 의미
 
 모델 타입은 `confirmed-lineup-poisson-v1`, 입력 스키마는 **3**입니다. 원정·홈 득점 평균을 같은 계수의 Poisson 회귀로 학습합니다.
