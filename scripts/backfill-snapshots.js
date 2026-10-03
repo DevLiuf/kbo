@@ -3,7 +3,8 @@ const { parseArgs, iterDates } = require("./ml-utils");
 const { FEATURE_SCHEMA_VERSION, isPregameSnapshot } = require("../lib/prediction-contract");
 const { assertDateRange, atomicWrite, ndjson, readNdjson, seoulToday } = require("../lib/artifacts");
 const { assertSupportedRuntime } = require("../lib/runtime");
-const { FEATURE_NAMES } = require("../lib/logistic");
+const { validateInputs } = require("../lib/score-model");
+const { rejectObsoleteOptions } = require("./score-training-utils");
 
 function buildSnapshotRow(payload, prediction) {
   return {
@@ -12,7 +13,8 @@ function buildSnapshotRow(payload, prediction) {
     asOfTimestamp: prediction.asOfTimestamp || payload.asOfTimestamp,
     gameDate: prediction.gameDate || payload.date,
     gameKey: prediction.gameKey || prediction.gameId,
-    features: prediction.features,
+    modelInputs: prediction.modelInputs,
+    trainingEligible: Boolean(prediction.lineupConfirmed === true && validateInputs(prediction.modelInputs)),
   };
 }
 
@@ -35,6 +37,7 @@ function mergeArchive(existing, collected) {
 async function main() {
   assertSupportedRuntime();
   const args = parseArgs(process.argv.slice(2));
+  rejectObsoleteOptions(args);
   const from = String(args.from || "");
   const to = String(args.to || from);
   assertDateRange(from, to);
@@ -73,17 +76,12 @@ async function main() {
           || typeof prediction.gameStartsAt !== "string" || !Number.isFinite(Date.parse(prediction.gameStartsAt))
           || String(prediction.gameDate || payload.date) !== date
           || !String(prediction.gameKey || prediction.gameId || "").trim()) {
-          throw new Error("Invalid schema2 prediction");
+          throw new Error("Invalid schema3 prediction");
         }
         const row = buildSnapshotRow(payload, prediction);
         if (isPregameSnapshot(row)) {
-          const input = row.scoreModelInputs;
-          if (!FEATURE_NAMES.every((name) => Number.isFinite(row.features[name]))
-            || !input || !Number.isFinite(input.baselineAwayRuns) || !Number.isFinite(input.baselineHomeRuns)
-            || typeof input.saberApplied !== "boolean"
-            || ![input.markovAwayRuns, input.markovHomeRuns, input.monteCarloAwayRuns, input.monteCarloHomeRuns]
-              .every((value) => value === null || Number.isFinite(value))) {
-            throw new Error("Invalid raw pregame features/scoreModelInputs");
+          if (!validateInputs(row.modelInputs)) {
+            throw new Error("Invalid confirmed-lineup modelInputs");
           }
           collected.push(row);
         } else if (prediction.trainingEligible === true) throw new Error("Invalid eligible pregame prediction");

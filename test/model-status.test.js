@@ -4,12 +4,12 @@ const fs = require("fs/promises");
 const os = require("os");
 const path = require("path");
 const { createHash } = require("crypto");
-const { FEATURE_NAMES } = require("../lib/logistic");
+const { MODEL_TYPE } = require("../lib/score-model");
 
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
-test("model status reports exact deployed bytes and only applies validated schema2 tuning", async (t) => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "kbo-status-test-"));
+test("HTTP model status never falls back to discarded coefficients and requires independent count validation", async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "kbo-count-status-"));
   const previous = process.env.KBO_DATA_DIR;
   process.env.KBO_DATA_DIR = directory;
   const app = require("../server");
@@ -21,34 +21,37 @@ test("model status reports exact deployed bytes and only applies validated schem
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     await fs.rm(directory, { recursive: true, force: true });
   });
-  const model = { ...Object.fromEntries(FEATURE_NAMES.map((name) => [name, 0])), featureSchemaVersion: 2,
-    intercept: 0.125, plattA: 1, plattB: 0, temperature: 1, preLineupShrink: 0.75,
-    version: "fixture-v1", calibrationRange: { from: "20260402", to: "20260402" },
-    validationRange: { from: "20260403", to: "20260403" } };
-  const modelFile = path.join(directory, "model_coefficients.kbo.json");
-  const tuningFile = path.join(directory, "saber_tuning_status.kbo.json");
-  const modelBytes = `${JSON.stringify(model)}\n`;
-  await fs.writeFile(modelFile, modelBytes);
-  const settings = { baseWeight: 0.5, markovWeight: 0.3, monteWeight: 0.2, clampThreshold: 4 };
-  await fs.writeFile(tuningFile, JSON.stringify({ best: settings, sampleSize: 40 }));
+  await fs.writeFile(path.join(directory, "model_coefficients.kbo.json"), JSON.stringify({ version: "legacy", intercept: 0 }));
+  const modelFile = path.join(directory, "run_model.kbo.json");
   const url = `http://127.0.0.1:${server.address().port}/api/model/status`;
-  const firstResponse = await fetch(url);
-  assert.equal(firstResponse.status, 200);
-  assert.equal(firstResponse.headers.get("cache-control"), "no-store");
-  const first = await firstResponse.json();
-  assert.equal(first.modelHash, hash(modelBytes));
-  assert.equal(first.saberSettingsSource, "default");
-  assert.equal(first.modelValidationIndependent, true);
-  await fs.writeFile(tuningFile, JSON.stringify({ featureSchemaVersion: 2, best: settings,
-    sampleSize: 40, validationSamples: 10, validationMae: 1.5, defaultValidationMae: 2 }));
-  const tuned = await (await fetch(url)).json();
-  assert.deepEqual(tuned.saberSettings, settings);
-  assert.equal(tuned.saberSettingsHash, hash(JSON.stringify(settings)));
-  assert.equal(tuned.saberSettingsSource, "validated_tuning");
-  const nextBytes = JSON.stringify({ ...model, version: "fixture-v2", intercept: -0.25 });
+  const missingResponse = await fetch(url);
+  assert.equal(missingResponse.status, 200);
+  assert.equal(missingResponse.headers.get("cache-control"), "no-store");
+  const missing = await missingResponse.json();
+  assert.equal(missing.status, "unavailable");
+  assert.equal(missing.unavailableCode, "MODEL_NOT_TRAINED");
+  assert.equal(missing.modelVersion, null);
+  const model = { modelType: MODEL_TYPE, featureSchemaVersion: 3, version: "fixture-count-v1", intercept: 0,
+    coefficients: { lineupOps: 1, pitchingFip: 1, bullpenWorkload: 0.1, park: 1, home: 0.05 },
+    trainingRange: { from: "20260401", to: "20260402" }, validationRange: { from: "20260403", to: "20260403" },
+    validationIndependent: false, metrics: { validation: { samples: 5, decisiveGames: 4, poissonNll: 2, mae: 1,
+      logLoss: 0.6, brier: 0.2 } } };
+  await fs.writeFile(modelFile, JSON.stringify(model));
+  assert.equal((await (await fetch(url)).json()).status, "unavailable");
+  const bytes = JSON.stringify({ ...model, validationIndependent: true });
+  await fs.writeFile(modelFile, bytes);
+  const ready = await (await fetch(url)).json();
+  assert.equal(ready.status, "ready");
+  assert.equal(ready.modelHash, hash(bytes));
+  assert.equal(ready.modelType, MODEL_TYPE);
+  assert.equal(ready.modelValidationIndependent, true);
+  await fs.writeFile(modelFile, JSON.stringify({ ...model, validationIndependent: true,
+    trainingRange: { from: "20260401", to: "20260403" } }));
+  assert.equal((await (await fetch(url)).json()).status, "unavailable");
+  const nextBytes = JSON.stringify({ ...model, validationIndependent: true, version: "fixture-count-v2", intercept: 0.1 });
   await fs.writeFile(modelFile, nextBytes);
   const next = await (await fetch(url)).json();
-  assert.equal(next.modelVersion, "fixture-v2");
+  assert.equal(next.modelVersion, "fixture-count-v2");
   assert.equal(next.modelHash, hash(nextBytes));
-  assert.notEqual(next.modelHash, first.modelHash);
+  assert.notEqual(next.modelHash, ready.modelHash);
 });

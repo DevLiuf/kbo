@@ -1,27 +1,3 @@
-const fs = require("fs/promises");
-
-async function readNdjson(filePath) {
-  try {
-    const content = await fs.readFile(filePath, "utf8");
-    return content
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => JSON.parse(line));
-  } catch (error) {
-    if (error.code === "ENOENT") return [];
-    throw new Error(`Failed to read NDJSON ${filePath}: ${error.message}`, { cause: error });
-  }
-}
-
-function sigmoid(x) {
-  return 1 / (1 + Math.exp(-x));
-}
-
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
-
 function parseArgs(argv) {
   const args = {};
   for (const raw of argv) {
@@ -61,9 +37,6 @@ function iterDates(from, to) {
 }
 
 module.exports = {
-  clamp,
   iterDates,
   parseArgs,
-  readNdjson,
-  sigmoid,
 };

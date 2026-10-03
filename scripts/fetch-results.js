@@ -1,8 +1,8 @@
-const { atomicWrite } = require("../lib/artifacts");
+const { atomicWrite, assertDateRange, readNdjson } = require("../lib/artifacts");
 const path = require("path");
 
 const { iterDates, parseArgs } = require("./ml-utils");
-const { readRows, validateRange } = require("../lib/logistic");
+const { rejectObsoleteOptions } = require("./score-training-utils");
 
 const KBO_GAME_LIST_URL = "https://www.koreabaseball.com/ws/Main.asmx/GetKboGameList";
 const KBO_SERIES_IDS = "0,1,3,4,5,6,7,8,9";
@@ -100,6 +100,7 @@ function mergeResults(existing, fetched) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  rejectObsoleteOptions(args);
   const from = args.from;
   const to = args.to || from;
   const output = args.output || path.join(process.cwd(), "data", "game_results.kbo.ndjson");
@@ -107,7 +108,7 @@ async function main() {
   if (!from || !/^\d{8}$/.test(from) || !/^\d{8}$/.test(to)) {
     throw new Error("Usage: node scripts/fetch-results.js --from=YYYYMMDD [--to=YYYYMMDD] [--output=path]");
   }
-  validateRange(from, to);
+  assertDateRange(from, to);
 
   const rows = [];
   for (const date of iterDates(from, to)) {
@@ -116,7 +117,7 @@ async function main() {
       rows.push(resultFromGame(game, date));
     }
   }
-  const merged = mergeResults(await readRows(output, true), rows);
+  const merged = mergeResults(await readNdjson(output, { allowMissing: true }), rows);
 
   const content = merged.map((row) => JSON.stringify(row)).join("\n") + (merged.length ? "\n" : "");
   await atomicWrite(output, content);

@@ -4,14 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>KBO 승부 예측</title>
-    <meta name="description" content="KBO 경기 승부 예측, 라인업 기반 분석, ML 학습/세이버 튜닝 상태를 제공하는 예측 서비스" />
+    <meta name="description" content="확정 라인업 OPS, 선발 FIP와 불펜 등판 기록 기반 KBO 득점 예측 및 독립 검증 상태" />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="KBO 승부 예측" />
-    <meta property="og:description" content="KBO 경기 승부 예측, 라인업 기반 분석, ML 학습/세이버 튜닝 상태 제공" />
+    <meta property="og:description" content="확정 라인업 기반 KBO 득점·승률 예측과 독립 검증 상태" />
     <meta property="og:site_name" content="KBO 승부 예측" />
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="KBO 승부 예측" />
-    <meta name="twitter:description" content="KBO 경기 승부 예측, 라인업 기반 분석, ML/세이버 상태 제공" />
+    <meta name="twitter:description" content="확정 라인업 기반 KBO 득점·승률 예측과 독립 검증 상태" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -30,7 +30,7 @@
 
       <section class="daily-predictions">
         <div class="daily-header">
-          <h2>게임센터 자동 예측</h2>
+          <h2>확정 라인업 경기 예측</h2>
           <p id="dailyDateText">-</p>
         </div>
         <div id="dailySummaryList" class="daily-summary-list" aria-label="경기별 예측 요약"></div>
@@ -68,8 +68,8 @@
               <th class="metric-help" data-sort-field="hrPerGame" title="경기당 팀 홈런 (높을수록 장타력 우세)">HR/G</th>
               <th class="metric-help" data-sort-field="teamEra" title="팀 평균자책점 ERA (낮을수록 우세)">팀ERA</th>
               <th class="metric-help" data-sort-field="teamWhip" title="팀 WHIP (이닝당 출루 허용, 낮을수록 우세)">WHIP</th>
-              <th class="metric-help" data-sort-field="bullpenUsagePerGame" title="경기당 불펜 기여도 (SV+HLD/G, 높을수록 불펜 성과 우세)">불펜(SV+HLD/G)</th>
-              <th class="metric-help" data-sort-field="kbbRatio" title="불펜 K/BB 비율 (높을수록 제구/탈삼진 우세)">K/BB</th>
+              <th class="metric-help" data-sort-field="bullpenUsagePerGame" title="팀 세이브·홀드의 경기당 합계. 실제 불펜 투구량·휴식 지표는 아닙니다.">SV+HLD/G</th>
+              <th class="metric-help" data-sort-field="kbbRatio" title="팀 전체 삼진/볼넷 비율. 불펜 전용 기록이 아닙니다.">팀 K/BB</th>
             </tr>
           </thead>
           <tbody id="metricsTableBody"></tbody>

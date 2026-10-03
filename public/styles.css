@@ -121,13 +121,13 @@ body {
   color: #8a5a00;
 }
 
-.model-status-pill.ml {
+.model-status-pill.model {
   background: #eef6ff;
   border-color: #bcd7f5;
   color: #1e4a7a;
 }
 
-.model-status-pill.saber {
+.model-status-pill.validation {
   background: #edfff4;
   border-color: #a8e0bf;
   color: #1b5e3a;
@@ -151,9 +151,8 @@ body {
 .model-status-range {
   color: #374151;
   opacity: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
   min-width: 0;
 }
 
@@ -316,12 +315,6 @@ body {
   flex-shrink: 0;
 }
 
-.daily-saber-badge {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .daily-mode {
   margin-left: auto;
@@ -332,7 +325,7 @@ body {
   letter-spacing: 0.5px;
 }
 
-.daily-mode.pre {
+.daily-mode.pending {
   background: #fff7e6;
   color: #8a5a00;
 }
@@ -342,46 +335,6 @@ body {
   color: #1b5e3a;
 }
 
-.daily-bet-badge {
-  border-radius: 999px;
-  padding: 2px 7px;
-  font-size: 0.6rem;
-  font-weight: 800;
-  letter-spacing: 0.3px;
-}
-
-.daily-bet-badge.recommend {
-  background: #dcfce7;
-  color: #166534;
-}
-
-.daily-bet-badge.caution {
-  background: #fef3c7;
-  color: #92400e;
-}
-
-.daily-bet-badge.avoid {
-  background: #fee2e2;
-  color: #991b1b;
-}
-
-.daily-saber-badge {
-  border-radius: 999px;
-  padding: 2px 7px;
-  font-size: 0.6rem;
-  font-weight: 800;
-  letter-spacing: 0.3px;
-}
-
-.daily-saber-badge.on {
-  background: #edfff4;
-  color: #1b5e3a;
-}
-
-.daily-saber-badge.off {
-  background: #f3f4f6;
-  color: #4b5563;
-}
 
 .daily-download-btn {
   border: 1px solid #c8d3e0;
@@ -758,11 +711,6 @@ body {
   color: #374151;
 }
 
-.daily-bet-reason {
-  margin-top: 4px;
-  font-size: 0.69rem;
-  color: #5e6b7d;
-}
 
 .daily-actual {
   margin-top: 6px;
@@ -869,10 +817,6 @@ body {
   color: #e3e9fb;
 }
 
-.confidence {
-  color: #7c2d12;
-  font-weight: 600;
-}
 
 .daily-note {
   margin-top: 6px;
@@ -1160,9 +1104,6 @@ tbody tr:hover {
     display: none;
   }
 
-  .daily-saber-badge {
-    display: none;
-  }
 
   .daily-mode {
     margin-left: auto;
@@ -1234,9 +1175,7 @@ tbody tr:hover {
   font-weight: 800;
 }
 
-.daily-item.capture-mode .daily-bet-badge,
-.daily-item.capture-mode .daily-mode,
-.daily-item.capture-mode .daily-saber-badge {
+.daily-item.capture-mode .daily-mode {
   padding: 4px 10px;
   font-size: 0.66rem;
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
@@ -1274,20 +1213,7 @@ tbody tr:hover {
   letter-spacing: -0.06em;
 }
 
-.daily-item.capture-mode .confidence {
-  color: #b45309;
-  font-size: 0.94rem;
-  font-weight: 900;
-}
 
-.daily-item.capture-mode .daily-bet-reason {
-  order: 2;
-  margin: 0;
-  color: #78350f;
-  font-size: 0.8rem;
-  font-weight: 800;
-  line-height: 1.45;
-}
 
 .daily-item.capture-mode .daily-note {
   order: 3;
@@ -1471,11 +1397,6 @@ tbody tr:hover {
 }
 
 .daily-item.capture-mode .starter-metric {
-  display: none;
-}
-
-.daily-item.capture-mode .starter-col .starter-metric:nth-of-type(5),
-.daily-item.capture-mode .starter-col .starter-metric:nth-of-type(8) {
   display: block;
 }
 
@@ -1653,11 +1574,6 @@ tbody tr:hover {
   font-size: 2rem;
 }
 
-.daily-item.capture-mode .daily-bet-reason {
-  max-width: 620px;
-  margin: 0 auto;
-  font-size: 0.82rem;
-}
 
 .daily-item.capture-mode .daily-card-details {
   order: 4;
@@ -1703,10 +1619,6 @@ tbody tr:hover {
   order: -1;
 }
 
-.daily-item.capture-mode .daily-bet-reason {
-  overflow-wrap: anywhere;
-  text-wrap: pretty;
-}
 
 .daily-item.capture-mode .starter-col,
 .daily-item.capture-mode .starter-col.right {
@@ -1714,10 +1626,6 @@ tbody tr:hover {
   justify-items: center;
 }
 
-.daily-item.capture-mode .daily-bet-reason {
-  color: #5f250b;
-  font-weight: 900;
-}
 
 /* Desktop card rebalance: left column gets structured analysis, not just whitespace. */
 @media (min-width: 1200px) {
@@ -1992,4 +1900,39 @@ tbody tr:hover {
   .summary-prob .daily-prob-row {
     font-size: 0.66rem;
   }
+}
+
+.daily-prob-label {
+  margin: 0;
+  color: #4b5563;
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+.daily-unavailable {
+  padding: 16px;
+  background: #fff7e6;
+  border: 1px solid #f5d799;
+  border-radius: 12px;
+  color: #785300;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.daily-unavailable p {
+  margin: 6px 0 0;
+}
+
+.daily-unavailable-reason {
+  margin: 0;
+  color: #5e6b7d;
+  font-size: 0.72rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.daily-summary-item .daily-mode {
+  white-space: normal;
+  line-height: 1.5;
 }

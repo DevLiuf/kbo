@@ -3,10 +3,11 @@ const path = require("path");
 const { spawnSync } = require("child_process");
 const { parseArgs } = require("./ml-utils");
 const {
-  booleanFlag, integerFlag, runNodeScript, fetchIncrementalResults, validateTrainedModel,
+  booleanFlag, integerFlag, runNodeScript, fetchIncrementalResults, validateTrainedModel, resolveOpeningDate,
 } = require("./retrain-daily");
 const { FEATURE_SCHEMA_VERSION } = require("../lib/prediction-contract");
-const { validateSaberSettings } = require("../lib/saber");
+const { MODEL_TYPE, validateModel } = require("../lib/score-model");
+const { rejectObsoleteOptions } = require("./score-training-utils");
 const {
   acquireLock, assertDateRange, copyIfPresent, promoteArtifacts, readNdjson, seoulToday, sha256, writeJson,
 } = require("../lib/artifacts");
@@ -91,9 +92,10 @@ async function verifyDeployment(baseUrl, expected, { attempts, delayMs, timeoutM
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const remote = await response.json();
-      if (remote.modelVersion !== expected.modelVersion || remote.modelHash !== expected.modelHash
-        || remote.featureSchemaVersion !== FEATURE_SCHEMA_VERSION || remote.saberSettingsHash !== expected.saberSettingsHash) {
-        throw new Error("Remote model/settings hashes do not match promoted artifacts");
+      if (remote.status !== "ready" || remote.modelType !== MODEL_TYPE || remote.modelValidationIndependent !== true
+        || remote.modelVersion !== expected.modelVersion || remote.modelHash !== expected.modelHash
+        || remote.featureSchemaVersion !== FEATURE_SCHEMA_VERSION) {
+        throw new Error("Remote count model type/schema/hash do not match promoted artifacts");
       }
       return { state: "verified", verifiedAt: new Date().toISOString(), attempts: attempt, remote };
     } catch (error) {
@@ -108,33 +110,34 @@ async function main() {
   assertSupportedRuntime();
   const args = parseArgs(process.argv.slice(2));
   const today = seoulToday();
-  const from = String(args.from || process.env.KBO_OPENING_DAY || `${today.slice(0, 4)}0331`);
+  let from = args.from ? String(args.from) : null;
   const to = String(args.to || today);
   const paths = {
     snapshots: path.resolve(String(args.snapshots || "data/prediction_snapshots.ndjson")),
     results: path.resolve(String(args.results || "data/game_results.kbo.ndjson")),
-    examples: path.resolve(String(args.examples || "data/training_examples.kbo.ndjson")),
-    model: path.resolve(String(args.model || "data/model_coefficients.kbo.json")),
-    tuning: path.resolve(String(args.tuning || "data/saber_tuning_status.kbo.json")),
+    examples: path.resolve(String(args.examples || "data/run_training_examples.kbo.ndjson")),
+    model: path.resolve(String(args.model || "data/run_model.kbo.json")),
     retrainStatus: path.resolve(String(args.retrainStatus || "data/daily_retrain_status.kbo.json")),
     status: path.resolve(String(args.status || "data/helper_status.kbo.json")),
   };
   const release = await acquireLock(path.resolve(String(args.lock || `${paths.model}.helper.lock`)));
   const status = {
     ok: false, startedAt: new Date().toISOString(), stage: "configuration", failure: null,
-    from, to, featureSchemaVersion: FEATURE_SCHEMA_VERSION,
+    from, to, featureSchemaVersion: FEATURE_SCHEMA_VERSION, modelType: MODEL_TYPE,
     modelVersion: null, modelHash: null, codeRevision: null, deployment: { state: "not_deployed" },
   };
   let staging;
   let promoted = false;
   let autoPush = false;
   try {
+    rejectObsoleteOptions(args);
+    from = await resolveOpeningDate(args, today);
+    status.from = from;
     assertDateRange(from, to);
     autoPush = booleanFlag(args.autoPush ?? process.env.HELPER_PC_AUTO_PUSH, false);
     const collectOnly = booleanFlag(args.collectOnly, false);
     const fetchResults = booleanFlag(args.fetchResults, true);
     const shouldVerify = booleanFlag(args.verifyDeployment, autoPush);
-    const minSamples = integerFlag(args.minSamples ?? args.minTuneSample ?? process.env.HELPER_PC_MIN_TUNE_SAMPLE, 20, 1);
     const timeoutMs = integerFlag(args.stageTimeoutMs ?? process.env.HELPER_PC_STAGE_TIMEOUT_MS, 25 * 60 * 1000, 1);
     const httpTimeoutMs = integerFlag(args.timeoutMs, 15000, 1);
     const verifyAttempts = integerFlag(args.verifyAttempts, 8, 1);
@@ -147,8 +150,11 @@ async function main() {
     status.collectOnly = collectOnly;
     try {
       const previousBytes = await fs.readFile(paths.model);
-      status.modelVersion = JSON.parse(previousBytes).version || null;
-      status.modelHash = sha256(previousBytes);
+      const previous = JSON.parse(previousBytes);
+      if (validateModel(previous) && previous.validationIndependent === true) {
+        status.modelVersion = previous.version;
+        status.modelHash = sha256(previousBytes);
+      }
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
@@ -199,7 +205,7 @@ async function main() {
       `--examples=${staged.examples}`, `--model=${staged.model}`, `--status=${staged.retrainStatus}`,
       "--fetchResults=false", `--stageTimeoutMs=${timeoutMs}`,
     ];
-    for (const key of ["epochs", "holdoutDays", "calibrationDays", "minExamples"]) {
+    for (const key of ["epochs", "holdoutDays", "minExamples", "lr", "l2"]) {
       if (args[key] !== undefined) retrainArgs.push(`--${key}=${args[key]}`);
     }
     await runNodeScript("retrain-daily.js", retrainArgs, { cwd: staging, timeoutMs });
@@ -209,40 +215,23 @@ async function main() {
     }
     const modelBytes = await fs.readFile(staged.model);
     const model = validateTrainedModel(JSON.parse(modelBytes));
-    if (retrain.modelHash !== sha256(modelBytes) || retrain.modelVersion !== model.version) {
+    if (retrain.modelType !== MODEL_TYPE || retrain.featureSchemaVersion !== FEATURE_SCHEMA_VERSION
+      || retrain.modelHash !== sha256(modelBytes) || retrain.modelVersion !== model.version) {
       throw new Error("Retrain status/model hashes mismatch");
     }
-    await setStage("tune-saber");
-    await runNodeScript("tune-saber-weights.js", [
-      `--from=${from}`, `--to=${to}`, `--snapshots=${staged.snapshots}`, `--results=${staged.results}`,
-      `--output=${staged.tuning}`, `--minSamples=${minSamples}`,
-    ], { cwd: staging, timeoutMs });
-    const tuning = await readJson(staged.tuning);
-    if (tuning.ok !== true || tuning.featureSchemaVersion !== FEATURE_SCHEMA_VERSION
-      || !validateSaberSettings(tuning.best) || tuning.sampleSize < minSamples
-      || !(tuning.validationSamples > 0) || !Number.isFinite(tuning.validationMae)
-      || !Number.isFinite(tuning.tuningMae) || tuning.tuningRange?.to >= tuning.validationRange?.from) {
-      throw new Error("Tuning health gate rejected insufficient/invalid output");
-    }
-    const saberSettings = {
-      baseWeight: tuning.best.baseWeight, markovWeight: tuning.best.markovWeight,
-      monteWeight: tuning.best.monteWeight, clampThreshold: tuning.best.clampThreshold,
-    };
     Object.assign(status, {
       modelVersion: model.version, modelHash: sha256(modelBytes),
-      saberSettings, saberSettingsHash: sha256(JSON.stringify(saberSettings)),
-      validation: model.metrics.validation, tuningValidation: { samples: tuning.validationSamples, mae: tuning.validationMae },
+      validation: model.metrics.validation,
     });
     let preflight;
     if (autoPush) {
       await setStage("deploy-preflight");
-      preflight = deploymentPreflight([paths.model, paths.tuning, paths.retrainStatus], process.cwd());
+      preflight = deploymentPreflight([paths.model, paths.retrainStatus], process.cwd());
     }
     await setStage("promote");
     await writeJson(staged.status, status);
     await promoteArtifacts([
       { source: staged.model, target: paths.model },
-      { source: staged.tuning, target: paths.tuning },
       { source: staged.retrainStatus, target: paths.retrainStatus },
       { source: staged.examples, target: paths.examples },
       { source: staged.status, target: paths.status },
@@ -250,7 +239,7 @@ async function main() {
     promoted = true;
     if (autoPush) {
       await setStage("deploy");
-      status.deployment = autoCommitAndPush(preflight, String(args.commitMessage || "Update ML model and saber tuning outputs"));
+      status.deployment = autoCommitAndPush(preflight, String(args.commitMessage || "Update confirmed-lineup run model"));
       await writeJson(paths.status, status);
       if (shouldVerify) {
         await setStage("verify-deployment");
@@ -273,8 +262,9 @@ async function main() {
     if (!promoted) {
       try {
         const activeBytes = await fs.readFile(paths.model);
-        status.modelVersion = JSON.parse(activeBytes).version || null;
-        status.modelHash = sha256(activeBytes);
+        const active = JSON.parse(activeBytes);
+        status.modelVersion = validateModel(active) && active.validationIndependent === true ? active.version : null;
+        status.modelHash = status.modelVersion ? sha256(activeBytes) : null;
       } catch (readError) {
         if (readError.code === "ENOENT") {
           status.modelVersion = null;
