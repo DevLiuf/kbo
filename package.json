@@ -1,6 +1,6 @@
 {
   "name": "kbo",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -13,6 +13,7 @@
     "ml:retrain-kbo": "node scripts/retrain-daily.js",
     "ml:helper-pc": "node scripts/helper-pc-train-and-tune.js",
     "ml:backfill-snapshots": "node scripts/backfill-snapshots.js",
+    "ml:bootstrap-historical": "node scripts/bootstrap-historical.js",
     "ml:export-backtest": "node scripts/export-score-backtest-details.js",
     "ml:walk-forward": "node scripts/walk-forward-eval.js",
     "helper:bundle": "node scripts/build-helper-bundle.js"

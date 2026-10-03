@@ -159,6 +159,36 @@ test("offline helper promotes independently validated count model and exact hash
   assert.equal((await readNdjson(path.join(directory, "examples.ndjson"))).filter((row) => row.homeScore === row.awayScore).length, 12);
 });
 
+test("historical-only helper trains without a live archive and retains reconstruction provenance", async (t) => {
+  const directory = await temporary(t);
+  const archived = archive();
+  const reconstructedAt = new Date().toISOString();
+  const historical = archived.snapshots.map((row) => {
+    const iso = `${row.gameDate.slice(0, 4)}-${row.gameDate.slice(4, 6)}-${row.gameDate.slice(6, 8)}`;
+    const inputsCutoffAt = new Date(`${iso}T00:00:00+09:00`).toISOString();
+    return { ...row, mode: "historical_reconstruction", dataOrigin: "historical_reconstruction",
+      gameState: "3", asOfTimestamp: reconstructedAt, reconstructedAt, inputsCutoffAt,
+      sourceThroughDate: shiftDate(row.gameDate, -1), modelInputs: { ...row.modelInputs, dataAsOf: inputsCutoffAt },
+      awayLineup: Array.from({ length: 9 }, (_, i) => ({ order: i + 1, name: `Away${i}` })),
+      homeLineup: Array.from({ length: 9 }, (_, i) => ({ order: i + 1, name: `Home${i}` })) };
+  });
+  await fs.writeFile(path.join(directory, "historical.ndjson"), ndjson(historical));
+  await fs.writeFile(path.join(directory, "results.ndjson"), ndjson(archived.results));
+  const result = await cli("helper-pc-train-and-tune.js", [...batchArgs, "--historical=historical.ndjson",
+    "--autoPush=false", "--retrainStatus=retrain.json", "--status=helper.json"], directory);
+  assert.equal(result.code, 0, result.stderr);
+  const model = JSON.parse(await fs.readFile(path.join(directory, "model.json"), "utf8"));
+  const examples = await readNdjson(path.join(directory, "examples.ndjson"));
+  assert.equal(model.validationIndependent, true);
+  assert.ok(model.trainingRange.to < model.validationRange.from);
+  assert.equal(examples.length, archived.results.length);
+  assert.ok(examples.every((row) => row.mode === "historical_reconstruction"
+    && row.reconstructedAt === reconstructedAt && row.modelInputs.dataAsOf === row.inputsCutoffAt));
+  const predicted = require("../lib/score-model").predictGame(model, historical[0].modelInputs);
+  assert.ok(predicted.homeWinProbability > 0.5);
+  await assert.rejects(fs.access(path.join(directory, "snapshots.ndjson")), { code: "ENOENT" });
+});
+
 test("first collect-only run needs no results file and archives only the 30-minute window without replacing the model", async (t) => {
   const directory = await temporary(t);
   const today = seoulToday();

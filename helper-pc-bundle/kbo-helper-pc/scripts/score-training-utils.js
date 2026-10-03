@@ -1,4 +1,4 @@
-const { isPregameSnapshot } = require("../lib/prediction-contract");
+const { isTrainingSnapshot } = require("../lib/prediction-contract");
 const { validateInputs } = require("../lib/score-model");
 const { assertDateRange } = require("../lib/artifacts");
 
@@ -16,7 +16,7 @@ function rowRange(rows) {
 }
 function validateExample(row) {
   return Boolean(row && typeof row.gameKey === "string" && row.gameKey.trim()
-    && isPregameSnapshot(row) && validateInputs(row.modelInputs)
+    && isTrainingSnapshot(row) && validateInputs(row.modelInputs)
     && Number.isInteger(row.homeScore) && row.homeScore >= 0
     && Number.isInteger(row.awayScore) && row.awayScore >= 0);
 }

@@ -1,0 +1,87 @@
+{
+  "modelType": "confirmed-lineup-poisson-v1",
+  "featureSchemaVersion": 3,
+  "version": "trained-score-kbo-2026-10-03T11:31:42.695Z",
+  "trainedAt": "2026-10-03T11:31:42.796Z",
+  "intercept": -0.0006043775424906727,
+  "coefficients": {
+    "lineupOps": 0.2983251611614662,
+    "pitchingFip": 0.5480360117026368,
+    "bullpenWorkload": 0.08024134776064636,
+    "park": 0,
+    "home": 0.030115425956070023
+  },
+  "samples": 66,
+  "trainSamples": 63,
+  "validSamples": 3,
+  "holdoutDays": 3,
+  "trainingSources": {
+    "livePregame": 0,
+    "historicalReconstruction": 66
+  },
+  "trainingRange": {
+    "from": "20260410",
+    "to": "20260908"
+  },
+  "validationRange": {
+    "from": "20260909",
+    "to": "20260927"
+  },
+  "validationIndependent": true,
+  "trainingFromGameDate": "20260410",
+  "trainingToGameDate": "20260908",
+  "validationFromGameDate": "20260909",
+  "validationToGameDate": "20260927",
+  "metrics": {
+    "train": {
+      "samples": 63,
+      "range": {
+        "from": "20260410",
+        "to": "20260908"
+      },
+      "poissonNll": 2.792607984351323,
+      "mae": 2.7826987710833953,
+      "logLoss": 0.7243770560266188,
+      "brier": 0.2654653353684536,
+      "accuracy": 0.46774193548387094,
+      "decisiveGames": 62,
+      "drawGames": 1
+    },
+    "validation": {
+      "samples": 3,
+      "range": {
+        "from": "20260909",
+        "to": "20260927"
+      },
+      "poissonNll": 3.7565663938066614,
+      "mae": 3.8795177564302343,
+      "logLoss": 0.558952722278789,
+      "brier": 0.18493567471313968,
+      "accuracy": 1,
+      "decisiveGames": 3,
+      "drawGames": 0
+    }
+  },
+  "baseline": {
+    "leagueRate": 5.5476190476190474,
+    "homeWinShare": 0.5806451612903226,
+    "trainingRange": {
+      "from": "20260410",
+      "to": "20260908"
+    },
+    "validation": {
+      "samples": 3,
+      "range": {
+        "from": "20260909",
+        "to": "20260927"
+      },
+      "poissonNll": 3.8202842880392356,
+      "mae": 4.015873015873016,
+      "logLoss": 0.6520895800671909,
+      "brier": 0.22962192160943462,
+      "accuracy": 0.6666666666666666,
+      "decisiveGames": 3,
+      "drawGames": 0
+    }
+  }
+}

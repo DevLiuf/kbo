@@ -6,7 +6,7 @@ const { MODEL_TYPE, validateModel } = require("../lib/score-model");
 const { rejectObsoleteOptions } = require("./score-training-utils");
 const { FEATURE_SCHEMA_VERSION } = require("../lib/prediction-contract");
 const {
-  acquireLock, assertDateRange, copyIfPresent, promoteArtifacts, readNdjson,
+  acquireLock, assertDateRange, atomicWrite, copyIfPresent, ndjson, promoteArtifacts, readNdjson,
   seoulToday, sha256, shiftDate, writeJson,
 } = require("../lib/artifacts");
 const { assertSupportedRuntime } = require("../lib/runtime");
@@ -121,6 +121,7 @@ async function main() {
   const paths = {
     results: path.resolve(String(args.results || "data/game_results.kbo.ndjson")),
     snapshots: path.resolve(String(args.snapshots || "data/prediction_snapshots.ndjson")),
+    historical: path.resolve(String(args.historical || "data/historical_inputs.kbo.ndjson")),
     examples: path.resolve(String(args.examples || "data/run_training_examples.kbo.ndjson")),
     model: path.resolve(String(args.model || "data/run_model.kbo.json")),
     status: path.resolve(String(args.status || "data/daily_retrain_status.kbo.json")),
@@ -145,9 +146,15 @@ async function main() {
     staging = await fs.mkdtemp(path.join(path.dirname(paths.model), ".retrain-"));
     const stagedResults = path.join(staging, "game_results.kbo.ndjson");
     const stagedExamples = path.join(staging, "run_training_examples.kbo.ndjson");
+    const stagedHistorical = path.join(staging, "historical_inputs.kbo.ndjson");
+    const stagedSnapshots = path.join(staging, "prediction_snapshots.ndjson");
     const stagedModel = path.join(staging, "run_model.kbo.json");
     const stagedStatus = path.join(staging, "daily_retrain_status.kbo.json");
     await copyIfPresent(paths.results, stagedResults);
+    await atomicWrite(stagedSnapshots, ndjson(await readNdjson(paths.snapshots, { allowMissing: args.snapshots === undefined })));
+    const historicalRows = await readNdjson(paths.historical, { allowMissing: args.historical === undefined });
+    await atomicWrite(stagedHistorical, ndjson(historicalRows));
+    status.historicalInputRows = historicalRows.length;
     status.stage = "fetch-results";
     if (booleanFlag(args.fetchResults, true)) {
       status.fetchFrom = await fetchIncrementalResults({
@@ -160,7 +167,8 @@ async function main() {
     }
     status.stage = "build-examples";
     await runNodeScript("build-training-examples.js", [
-      `--results=${stagedResults}`, `--snapshots=${paths.snapshots}`, `--output=${stagedExamples}`,
+      `--results=${stagedResults}`, `--snapshots=${stagedSnapshots}`, `--output=${stagedExamples}`,
+      `--historical=${stagedHistorical}`,
       `--from=${from}`, `--to=${to}`,
     ], { cwd: staging, timeoutMs });
     const examples = await readNdjson(stagedExamples);

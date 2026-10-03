@@ -9,7 +9,7 @@ const { FEATURE_SCHEMA_VERSION } = require("../lib/prediction-contract");
 const { MODEL_TYPE, validateModel } = require("../lib/score-model");
 const { rejectObsoleteOptions } = require("./score-training-utils");
 const {
-  acquireLock, assertDateRange, copyIfPresent, promoteArtifacts, readNdjson, seoulToday, sha256, writeJson,
+  acquireLock, assertDateRange, atomicWrite, copyIfPresent, ndjson, promoteArtifacts, readNdjson, seoulToday, sha256, shiftDate, writeJson,
 } = require("../lib/artifacts");
 const { assertSupportedRuntime } = require("../lib/runtime");
 
@@ -114,6 +114,7 @@ async function main() {
   const to = String(args.to || today);
   const paths = {
     snapshots: path.resolve(String(args.snapshots || "data/prediction_snapshots.ndjson")),
+    historical: path.resolve(String(args.historical || "data/historical_inputs.kbo.ndjson")),
     results: path.resolve(String(args.results || "data/game_results.kbo.ndjson")),
     examples: path.resolve(String(args.examples || "data/run_training_examples.kbo.ndjson")),
     model: path.resolve(String(args.model || "data/run_model.kbo.json")),
@@ -137,6 +138,8 @@ async function main() {
     autoPush = booleanFlag(args.autoPush ?? process.env.HELPER_PC_AUTO_PUSH, false);
     const collectOnly = booleanFlag(args.collectOnly, false);
     const fetchResults = booleanFlag(args.fetchResults, true);
+    const bootstrapHistorical = booleanFlag(args.bootstrapHistorical, false);
+    if (bootstrapHistorical && collectOnly) throw new Error("--bootstrapHistorical cannot be combined with --collectOnly");
     const shouldVerify = booleanFlag(args.verifyDeployment, autoPush);
     const timeoutMs = integerFlag(args.stageTimeoutMs ?? process.env.HELPER_PC_STAGE_TIMEOUT_MS, 25 * 60 * 1000, 1);
     const httpTimeoutMs = integerFlag(args.timeoutMs, 15000, 1);
@@ -161,8 +164,9 @@ async function main() {
     await fs.mkdir(path.dirname(paths.model), { recursive: true });
     staging = await fs.mkdtemp(path.join(path.dirname(paths.model), ".helper-"));
     const staged = Object.fromEntries(Object.keys(paths).map((key) => [key, path.join(staging, `${key}-${path.basename(paths[key])}`)]));
-    await copyIfPresent(paths.snapshots, staged.snapshots);
+    await atomicWrite(staged.snapshots, ndjson(await readNdjson(paths.snapshots, { allowMissing: true })));
     await copyIfPresent(paths.results, staged.results);
+    if (!collectOnly) await atomicWrite(staged.historical, ndjson(await readNdjson(paths.historical, { allowMissing: bootstrapHistorical || args.historical === undefined })));
     const setStage = async (stage) => {
       status.stage = stage;
       await writeJson(paths.status, status);
@@ -184,6 +188,19 @@ async function main() {
     } else {
       status.snapshotCollection = "skipped_historical";
     }
+    if (bootstrapHistorical) {
+      await setStage("bootstrap-historical");
+      const historicalTo = to < today ? to : shiftDate(today, -1);
+      await runNodeScript("bootstrap-historical.js", [
+        `--from=${from}`, `--to=${historicalTo}`, `--output=${staged.historical}`,
+        `--results=${staged.results}`, `--cacheDir=${path.join(path.dirname(paths.historical), "historical-cache")}`,
+        `--timeoutMs=${httpTimeoutMs}`,
+      ], { cwd: staging, timeoutMs });
+      await promoteArtifacts([
+        { source: staged.historical, target: paths.historical },
+        { source: staged.results, target: paths.results },
+      ]);
+    }
     await setStage("collect-results");
     if (fetchResults) {
       status.fetchFrom = await fetchIncrementalResults({
@@ -200,9 +217,12 @@ async function main() {
       console.log(JSON.stringify(status, null, 2));
       return;
     }
+    status.historicalInputRows = (await readNdjson(staged.historical)).length;
+    status.historicalBootstrap = bootstrapHistorical;
     await setStage("retrain");
     const retrainArgs = [
       `--from=${from}`, `--to=${to}`, `--results=${staged.results}`, `--snapshots=${staged.snapshots}`,
+      `--historical=${staged.historical}`,
       `--examples=${staged.examples}`, `--model=${staged.model}`, `--status=${staged.retrainStatus}`,
       "--fetchResults=false", `--stageTimeoutMs=${timeoutMs}`,
     ];

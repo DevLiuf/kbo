@@ -1,9 +1,9 @@
 {
-  "version": "2.1.1",
+  "version": "2.2.0",
   "files": [
     {
       "path": "README.md",
-      "sha256": "e387e2a731ac449a81c90e457679b7a5e2962f1fff9b33a268000fa42d0be686"
+      "sha256": "14ab674d2f8a5243365f37031708bcf6508a49456f69721698d3d10d9dbab173"
     },
     {
       "path": "lib/artifacts.js",
@@ -15,11 +15,15 @@
     },
     {
       "path": "lib/kbo-confirmed-data.js",
-      "sha256": "b84f9e5e74488b4fcc16fc04ca4df3c120b9e539007ba7b79580eb2e3e68e758"
+      "sha256": "c5d3bc19892c8a6d69b84311b4c5c066cc39a150f275c63f2e2a47e9b2012083"
+    },
+    {
+      "path": "lib/kbo-historical-data.js",
+      "sha256": "342b526195e9df6ab6165671badbb40598d602c8dce4cce56a52fd8605dbe3a7"
     },
     {
       "path": "lib/prediction-contract.js",
-      "sha256": "6c8f4f2cfa9c42c9c9a114dff9ef5a6776c3ac8d0afc7e16025e095fc32f6b75"
+      "sha256": "7b06b491b8a1add692ce139f03ef5d1ccb3778c21359c5e86a9c60df33264efd"
     },
     {
       "path": "lib/pythagorean.js",
@@ -35,11 +39,11 @@
     },
     {
       "path": "package-lock.json",
-      "sha256": "c88945e9307ab9cb929f1c52baa377a93bd62ee36d94db1769eec24d5ce79239"
+      "sha256": "fafec39686fe8a4aa6b101756ba21711c8c5327f1a2a5e3b5df9ca9499965ff2"
     },
     {
       "path": "package.json",
-      "sha256": "02e4396b7994eea1990d258a14ff63211c3787f24d96e0b5a4bd51c675fec707"
+      "sha256": "bfed1114830849a4f28b3c57c7c5726141f2ee4770dfcfbb7f99683d67895b80"
     },
     {
       "path": "quick-train-tune.bat",
@@ -54,8 +58,12 @@
       "sha256": "920d72485d89633586a5aefd2f7dc582524933e300ae346c08e64027df8fa488"
     },
     {
+      "path": "scripts/bootstrap-historical.js",
+      "sha256": "3d9d5d713cde94580ba3caf95706ef52cc7bf08aa426f95d803666e4d09c6d99"
+    },
+    {
       "path": "scripts/build-training-examples.js",
-      "sha256": "103b0b66cac86de7e06fe4e6a98eaf8763782f8d4ac934c56e8b5dc07a426ce7"
+      "sha256": "3c26015c5dc3eb735e61554b88e5a440d37a48528d3d8e60ff53a05a42e30e5c"
     },
     {
       "path": "scripts/eval-score-model.js",
@@ -71,7 +79,7 @@
     },
     {
       "path": "scripts/helper-pc-train-and-tune.js",
-      "sha256": "30cfcc83aee1971c4a81aab6aaef9a1f7b975cc8ff25fc06848ef87fdf7bf3e5"
+      "sha256": "65444fd8751720a3f1cf968142d0132005d9ad43f42023df8817f1273a7d57b1"
     },
     {
       "path": "scripts/ml-utils.js",
@@ -79,15 +87,15 @@
     },
     {
       "path": "scripts/retrain-daily.js",
-      "sha256": "a3f80f6b118ec5a4fb5bf85dcdb8fe17381035e8b2b60feb6d74763765ceba1e"
+      "sha256": "05932adf25c9b5444d3799f02eb242bbd232d25ddb60d637a58b1ddeb75d24b9"
     },
     {
       "path": "scripts/score-training-utils.js",
-      "sha256": "b00fa3705f0ec40c294a4153c71ce5a4d5d174b94dceb37a52967db81af93167"
+      "sha256": "bf3c6f8c595f786f6707dce26e7de292b87504a909ecdab418ae5d7c0bece52a"
     },
     {
       "path": "scripts/train-score-model.js",
-      "sha256": "2a829d3c3ac0037d825ee2b00f9749e1d210d86dec3dc96cc1731ff128117592"
+      "sha256": "7db4cbf022f9a8b26a58f518570cb4b6b731aaae04528a53f097707355da901f"
     },
     {
       "path": "scripts/walk-forward-eval.js",

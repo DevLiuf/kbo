@@ -12,3 +12,5 @@ dist/
 build/
 tmp/
 *.tmp
+.vercel
+data/historical-cache/

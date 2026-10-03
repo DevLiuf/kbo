@@ -224,6 +224,19 @@ test("baseball fractional innings and zero-out appearances retain real walks and
   assert.equal(parsePitcherBox(shuffled).relief.pitches, 45);
 });
 
+test("official team earned runs are independent of individual and bullpen earned runs", () => {
+  const raw = pitcherGrid("네일");
+  raw.tfoot[0].row[10].Text = "4";
+  const parsed = parsePitcherBox(raw);
+  assert.equal(parsed.totals.earnedRuns, 4);
+  assert.equal(parsed.rows.reduce((sum, row) => sum + row.earnedRuns, 0), 5);
+  assert.equal(parsed.relief.earnedRuns, 2);
+  raw.tfoot[0].row[10].Text = "6";
+  assert.throws(() => parsePitcherBox(raw), coded("BOXSCORE_TOTAL_INVALID"));
+  raw.tfoot[0].row[10].Text = "";
+  assert.throws(() => parsePitcherBox(raw), coded("BOXSCORE_TOTAL_INVALID"));
+});
+
 test("completed boxscores require every row, dynamic schema, totals and game identity", () => {
   const g = completed();
   const box = parseBoxscore(boxPayload(), g);

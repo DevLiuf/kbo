@@ -87,9 +87,11 @@ function trainModel(inputRows, options = {}) {
   if (rows.length < minExamples) throw new Error(`Insufficient training examples (${rows.length} < ${minExamples})`);
   const { trainRows, testRows } = splitByDate(rows, holdoutDays);
   const trainedAt = new Date().toISOString();
+  const trainingSources = { livePregame: 0, historicalReconstruction: 0 };
+  for (const row of rows) trainingSources[row.mode === "historical_reconstruction" ? "historicalReconstruction" : "livePregame"] += 1;
   const model = { modelType: MODEL_TYPE, featureSchemaVersion: FEATURE_SCHEMA_VERSION,
     version: options.version || `trained-score-kbo-${trainedAt}`, trainedAt, ...fitCounts(trainRows, { epochs, learningRate, l2 }),
-    samples: rows.length, trainSamples: trainRows.length, validSamples: testRows.length, holdoutDays,
+    samples: rows.length, trainSamples: trainRows.length, validSamples: testRows.length, holdoutDays, trainingSources,
     trainingRange: rowRange(trainRows), validationRange: rowRange(testRows), validationIndependent: true };
   if (!validateModel(model)) throw new Error("Training produced invalid count coefficients");
   Object.assign(model, { trainingFromGameDate: model.trainingRange.from, trainingToGameDate: model.trainingRange.to,
