@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f7f7f5" />
     <title>KBO 승부 예측</title>
     <meta name="description" content="확정 라인업 OPS, 선발 FIP와 불펜 등판 기록 기반 KBO 득점 예측 및 독립 검증 상태" />
     <meta property="og:type" content="website" />
@@ -15,68 +16,131 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="page">
-      <header class="hero">
-        <h1>KBO 승부 예측</h1>
-      </header>
+    <a class="skip-link" href="#predictions">경기 예측으로 바로가기</a>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="#top" aria-label="KBO 승부 예측 처음으로"><strong>KBO</strong><span>승부 예측</span></a>
+        <nav aria-label="주요 메뉴">
+          <a href="#predictions">경기 예측</a>
+          <a href="#rankings">팀 순위</a>
+          <a href="#metrics">상세 지표</a>
+        </nav>
+      </div>
+    </header>
 
-      <section class="meta">
-        <p id="statusText">데이터를 불러오는 중...</p>
-        <div id="modelStatusRow" class="model-status-row" aria-live="polite"></div>
-        <div class="meta-actions">
-          <button id="refreshButton">최신 데이터 새로고침</button>
+    <main id="top" class="page">
+      <section class="hero" aria-labelledby="pageTitle">
+        <div class="hero-copy">
+          <p class="eyebrow">기록으로 읽는 오늘의 경기</p>
+          <h1 id="pageTitle">KBO 승부 예측<span class="title-period">.</span></h1>
+          <p class="hero-description">확정 라인업과 투수 기록을 함께 읽고,<br class="desktop-break" /> 득점과 승리 가능성을 살펴보세요.</p>
+        </div>
+        <aside class="hero-method" aria-label="예측에 사용하는 기록">
+          <p class="method-title">예측의 기준</p>
+          <dl>
+            <div><dt>타선</dt><dd>확정 라인업 OPS</dd></div>
+            <div><dt>선발</dt><dd>FIP · 예상 이닝</dd></div>
+            <div><dt>불펜</dt><dd>실제 구원투수 등판 기록</dd></div>
+          </dl>
+        </aside>
+      </section>
+
+      <section class="meta" aria-labelledby="modelStatusTitle">
+        <div class="meta-heading">
+          <h2 id="modelStatusTitle">데이터 · 모델 상태</h2>
+          <p id="statusText" role="status">데이터를 불러오는 중...</p>
+        </div>
+        <div id="modelStatusRow" class="model-status-row" aria-live="polite">
+          <p class="model-loading">모델과 독립 검증 상태를 확인하고 있습니다.</p>
         </div>
       </section>
 
-      <section class="daily-predictions">
-        <div class="daily-header">
-          <h2>확정 라인업 경기 예측</h2>
-          <p id="dailyDateText">-</p>
+      <section id="predictions" class="daily-predictions" aria-labelledby="predictionsTitle">
+        <div class="section-heading daily-header">
+          <h2 id="predictionsTitle">확정 라인업 경기 예측</h2>
+          <p>경기별 승리 확률과 기대 득점. 라인업이나 검증된 모델이 준비되지 않으면 수치 예측을 제공하지 않습니다.</p>
         </div>
+        <div class="prediction-toolbar">
+          <div class="date-control">
+            <label for="gameDateInput">경기 날짜</label>
+            <input id="gameDateInput" name="gameDate" type="date" />
+          </div>
+          <label class="checkbox-control" for="includeFinishedInput">
+            <input id="includeFinishedInput" name="includeFinished" type="checkbox" checked />
+            <span>종료 경기 포함</span>
+          </label>
+          <button id="refreshButton" type="button">데이터 새로고침</button>
+        </div>
+        <p id="dailyDateText" class="daily-date" aria-live="polite">경기 일정을 확인하고 있습니다.</p>
         <div id="dailySummaryList" class="daily-summary-list" aria-label="경기별 예측 요약"></div>
-        <div id="dailyPredictionsList" class="daily-list">
+        <div id="dailyPredictionsList" class="daily-list" aria-live="polite">
           <p class="daily-empty">경기 예측을 불러오는 중...</p>
         </div>
       </section>
 
-      <section class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>순위</th>
-              <th>팀</th>
-              <th>경기</th>
-              <th>득점</th>
-              <th>실점</th>
-              <th>피타고리안</th>
-            </tr>
-          </thead>
-          <tbody id="tableBody"></tbody>
-        </table>
+      <section id="rankings" class="data-section rankings-section" aria-labelledby="rankingsTitle">
+        <div class="section-heading">
+          <h2 id="rankingsTitle">득실점으로 보는 팀 순위</h2>
+          <p>득점과 실점으로 계산한 피타고리안 기대 승률 순위입니다. 실제 리그 순위와 다를 수 있습니다.</p>
+        </div>
+        <div class="table-wrap" role="region" aria-label="팀별 피타고리안 순위 표, 가로로 스크롤할 수 있습니다" tabindex="0">
+          <table class="rankings-table">
+            <caption class="visually-hidden">팀별 경기 수, 득점, 실점과 피타고리안 기대 승률</caption>
+            <thead>
+              <tr>
+                <th scope="col">순위</th>
+                <th scope="col">팀</th>
+                <th scope="col">경기</th>
+                <th scope="col">득점</th>
+                <th scope="col">실점</th>
+                <th scope="col">피타고리안</th>
+              </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+          </table>
+        </div>
+        <p class="table-note">피타고리안 기대 승률 = 득점<sup>1.83</sup> / (득점<sup>1.83</sup> + 실점<sup>1.83</sup>)</p>
       </section>
 
-      <section class="table-wrap metrics-wrap">
-        <h3 class="table-subtitle">팀 지표 상세</h3>
-        <table id="metricsTable">
-          <thead>
-            <tr>
-              <th class="metric-help" data-sort-field="team" title="팀명">팀</th>
-              <th class="metric-help" data-sort-field="games" title="현재까지 치른 경기 수">경기</th>
-              <th class="metric-help" data-sort-field="offenseRpg" title="경기당 평균 득점 (높을수록 공격력 우세)">득점R/G</th>
-              <th class="metric-help" data-sort-field="defenseRpg" title="경기당 평균 실점 (낮을수록 수비력 우세)">실점R/G</th>
-              <th class="metric-help" data-sort-field="battingAvg" title="팀 타율 (높을수록 우세)">AVG</th>
-              <th class="metric-help" data-sort-field="hrPerGame" title="경기당 팀 홈런 (높을수록 장타력 우세)">HR/G</th>
-              <th class="metric-help" data-sort-field="teamEra" title="팀 평균자책점 ERA (낮을수록 우세)">팀ERA</th>
-              <th class="metric-help" data-sort-field="teamWhip" title="팀 WHIP (이닝당 출루 허용, 낮을수록 우세)">WHIP</th>
-              <th class="metric-help" data-sort-field="bullpenUsagePerGame" title="팀 세이브·홀드의 경기당 합계. 실제 불펜 투구량·휴식 지표는 아닙니다.">SV+HLD/G</th>
-              <th class="metric-help" data-sort-field="kbbRatio" title="팀 전체 삼진/볼넷 비율. 불펜 전용 기록이 아닙니다.">팀 K/BB</th>
-            </tr>
-          </thead>
-          <tbody id="metricsTableBody"></tbody>
-        </table>
+      <section id="metrics" class="data-section metrics-wrap" aria-labelledby="metricsTitle">
+        <div class="section-heading">
+          <h2 id="metricsTitle">팀 지표 상세</h2>
+          <p>공격과 투구 지표를 나란히 비교하세요. 열 제목을 선택하면 해당 지표를 기준으로 정렬합니다.</p>
+        </div>
+        <div class="table-wrap" role="region" aria-label="팀 상세 지표 표, 가로로 스크롤할 수 있습니다" tabindex="0">
+          <table id="metricsTable">
+            <caption class="visually-hidden">팀별 공격 및 투구 지표. 열 제목 버튼으로 정렬합니다.</caption>
+            <thead>
+              <tr>
+                <th scope="col" class="metric-help" data-sort-field="team" title="팀명"><button type="button" class="metrics-sort-button">팀</button></th>
+                <th scope="col" class="metric-help" data-sort-field="games" title="현재까지 치른 경기 수"><button type="button" class="metrics-sort-button">경기</button></th>
+                <th scope="col" class="metric-help" data-sort-field="offenseRpg" title="경기당 평균 득점 (높을수록 공격력 우세)"><button type="button" class="metrics-sort-button">득점R/G</button></th>
+                <th scope="col" class="metric-help" data-sort-field="defenseRpg" title="경기당 평균 실점 (낮을수록 수비력 우세)"><button type="button" class="metrics-sort-button">실점R/G</button></th>
+                <th scope="col" class="metric-help" data-sort-field="battingAvg" title="팀 타율 (높을수록 우세)"><button type="button" class="metrics-sort-button">AVG</button></th>
+                <th scope="col" class="metric-help" data-sort-field="hrPerGame" title="경기당 팀 홈런 (높을수록 장타력 우세)"><button type="button" class="metrics-sort-button">HR/G</button></th>
+                <th scope="col" class="metric-help" data-sort-field="teamEra" title="팀 평균자책점 ERA (낮을수록 우세)"><button type="button" class="metrics-sort-button">팀ERA</button></th>
+                <th scope="col" class="metric-help" data-sort-field="teamWhip" title="팀 WHIP (이닝당 출루 허용, 낮을수록 우세)"><button type="button" class="metrics-sort-button">WHIP</button></th>
+                <th scope="col" class="metric-help" data-sort-field="bullpenUsagePerGame" title="팀 세이브·홀드의 경기당 합계. 실제 불펜 투구량·휴식 지표는 아닙니다."><button type="button" class="metrics-sort-button">SV+HLD/G</button></th>
+                <th scope="col" class="metric-help" data-sort-field="kbbRatio" title="팀 전체 삼진/볼넷 비율. 불펜 전용 기록이 아닙니다."><button type="button" class="metrics-sort-button">팀 K/BB</button></th>
+              </tr>
+            </thead>
+            <tbody id="metricsTableBody"></tbody>
+          </table>
+        </div>
+        <div class="metrics-notes">
+          <p><strong>지표 읽기</strong> R/G는 경기당 기록, AVG는 타율, ERA는 평균자책점, WHIP은 이닝당 출루 허용입니다.</p>
+          <p>SV+HLD/G는 실제 불펜 투구량·휴식 지표가 아니며, 팀 K/BB는 불펜 전용 기록이 아닙니다.</p>
+        </div>
       </section>
     </main>
 
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <div class="footer-heading"><span class="footer-brand">KBO 승부 예측</span><a href="https://www.koreabaseball.com/" target="_blank" rel="noopener noreferrer">KBO 공식 기록 <span class="visually-hidden">(새 창)</span><span aria-hidden="true">↗</span></a></div>
+        <p>예측은 기록에 기반한 참고 정보이며 경기 결과를 보장하지 않습니다. 공식 라인업과 검증된 모델 데이터가 없는 경기는 예측 수치를 제공하지 않습니다.</p>
+        <p>본 서비스는 KBO의 공식 서비스가 아닙니다. 경기 일정과 기록은 KBO 공식 자료에서 확인하세요.</p>
+      </div>
+    </footer>
     <script src="/main.js"></script>
   </body>
 </html>

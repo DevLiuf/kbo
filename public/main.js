@@ -7,6 +7,8 @@ const dailyDateText = document.getElementById("dailyDateText");
 const dailyPredictionsList = document.getElementById("dailyPredictionsList");
 const dailySummaryList = document.getElementById("dailySummaryList");
 const modelStatusRow = document.getElementById("modelStatusRow");
+const gameDateInput = document.getElementById("gameDateInput");
+const includeFinishedInput = document.getElementById("includeFinishedInput");
 
 const FIXED_EXPONENT = 1.83;
 const metricsSortState = {
@@ -14,7 +16,11 @@ const metricsSortState = {
   direction: "asc",
 };
 let metricsRowsCache = [];
-const currentLeague = "kbo";
+let refreshPromise = null;
+const REQUEST_TIMEOUT_MS = 20000;
+// The collector shares six request slots (15 seconds each) across player lookups
+// and fourteen days of box scores. A cold, full game day needs many batches.
+const GAMEDAY_TIMEOUT_MS = 15 * 60 * 1000;
 let html2CanvasLoaderPromise = null;
 
 function ensureHtml2CanvasLoaded() {
@@ -98,10 +104,56 @@ async function downloadPredictionCardImage(cardElement, triggerButton) {
   }
 }
 
-function resolveApiUrl(exponent, league) {
+function resolveApiUrl(path) {
   const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
   const baseUrl = isHttp ? "" : "http://localhost:3000";
-  return `${baseUrl}/api/teams/pythagorean?exponent=${exponent}&league=${league}`;
+  return `${baseUrl}${path}`;
+}
+
+async function fetchJson(path, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(resolveApiUrl(path), {
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      throw new Error(`서버가 요청을 처리하지 못했습니다 (HTTP ${response.status}).`);
+    }
+    return await response.json();
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error("응답 대기 시간을 초과했습니다. 잠시 후 새로고침해 주세요.");
+    }
+    if (error instanceof TypeError) {
+      throw new Error("서버에 연결할 수 없습니다. 네트워크와 서버 실행 상태를 확인해 주세요.");
+    }
+    if (error instanceof SyntaxError) {
+      throw new Error("서버 응답을 읽을 수 없습니다. 잠시 후 다시 시도해 주세요.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function seoulDateInputValue() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const value = (type) => parts.find((part) => part.type === type).value;
+  return `${value("year")}-${value("month")}-${value("day")}`;
+}
+
+function selectedGameDate() {
+  const value = gameDateInput ? gameDateInput.value : seoulDateInputValue();
+  const date = new Date(`${value}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(date.getTime())
+      || date.toISOString().slice(0, 10) !== value) {
+    throw new Error("조회할 경기 날짜를 올바르게 선택해 주세요.");
+  }
+  return value.replaceAll("-", "");
 }
 
 function formatPercent(value) {
@@ -381,12 +433,22 @@ function updateMetricsSortHeaderState() {
     const field = header.dataset.sortField;
     const isActive = field === metricsSortState.field;
     header.dataset.sortDir = isActive ? metricsSortState.direction : "none";
+    header.setAttribute("aria-sort", isActive
+      ? metricsSortState.direction === "asc" ? "ascending" : "descending"
+      : "none");
   });
 }
 
 function setupMetricsSortHeaders() {
   metricsSortHeaders.forEach((header) => {
     header.classList.add("sortable");
+    if (!header.querySelector("button")) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "metrics-sort-button";
+      button.textContent = header.textContent.trim();
+      header.replaceChildren(button);
+    }
     header.addEventListener("click", () => {
       const field = header.dataset.sortField;
       if (!field) {
@@ -401,7 +463,7 @@ function setupMetricsSortHeaders() {
       }
 
       updateMetricsSortHeaderState();
-      renderMetricsRows(metricsRowsCache);
+      if (metricsRowsCache.length) renderMetricsRows(metricsRowsCache);
     });
   });
   updateMetricsSortHeaderState();
@@ -494,11 +556,11 @@ function renderStarterBlock(game) {
 }
 
 function renderDailyPredictions(payload) {
-  dailyDateText.textContent = `${payload.dateText || payload.date || "-"} · 확정 라인업 전용 · ${payload.modelVersion || "검증 모델 대기"}`;
+  dailyDateText.textContent = `${formatCompactDate(payload.date)} (KST) · ${payload.includeFinished ? "종료 경기 포함" : "종료 경기 제외"} · ${payload.modelVersion || "검증 모델 대기"}`;
   dailyPredictionsList.innerHTML = "";
   renderDailySummary(payload.predictions);
   if (!Array.isArray(payload.predictions) || payload.predictions.length === 0) {
-    dailyPredictionsList.innerHTML = '<p class="daily-empty">해당 날짜에 예정된 경기가 없습니다.</p>';
+    dailyPredictionsList.innerHTML = `<p class="daily-empty">${payload.includeFinished ? "해당 날짜에 조회할 경기가 없습니다." : "해당 날짜에 종료 경기를 제외한 조회 결과가 없습니다."}</p>`;
     return;
   }
   payload.predictions.forEach((game) => {
@@ -544,75 +606,124 @@ function renderDailyPredictions(payload) {
 }
 
 async function loadDailyPredictions() {
-  dailyPredictionsList.innerHTML = '<p class="daily-empty">게임센터 일정 기반 자동 예측을 계산 중...</p>';
+  dailyPredictionsList.dataset.state = "loading";
+  dailyPredictionsList.setAttribute("aria-busy", "true");
+  dailyPredictionsList.innerHTML = '<p class="daily-empty">공식 일정과 확정 라인업을 조회하고 있습니다. 최초 조회는 수 분 걸릴 수 있습니다.</p>';
   renderDailySummary([]);
-
+  let date;
   try {
-    const response = await fetch(
-      "/api/predictions/gameday",
-    );
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+    date = selectedGameDate();
+    gameDateInput?.removeAttribute("aria-invalid");
+    dailyDateText.textContent = `${formatCompactDate(date)} (KST) · 조회 중`;
+    const query = new URLSearchParams({
+      date, includeFinished: String(includeFinishedInput ? includeFinishedInput.checked : true),
+    });
+    const payload = await fetchJson(`/api/predictions/gameday?${query}`, GAMEDAY_TIMEOUT_MS);
+    if (payload.date !== date || !Array.isArray(payload.predictions)) {
+      throw new Error("선택한 날짜의 경기 응답을 확인할 수 없습니다.");
     }
-
-    const payload = await response.json();
     renderDailyPredictions(payload);
-    return payload;
+    dailyPredictionsList.dataset.state = "ready";
   } catch (error) {
-    dailyPredictionsList.innerHTML = `<p class="daily-empty">자동 예측 로드 실패: ${error.message}</p>`;
+    if (!date) gameDateInput?.setAttribute("aria-invalid", "true");
+    dailyDateText.textContent = date ? `${formatCompactDate(date)} (KST) · 조회 실패` : "경기 날짜 확인 필요";
+    dailyPredictionsList.dataset.state = "error";
+    dailyPredictionsList.innerHTML = `<p class="daily-empty" role="alert">경기 조회 실패: ${escapeHtml(error.message)}</p>`;
     renderDailySummary([]);
-    return null;
+  } finally {
+    dailyPredictionsList.setAttribute("aria-busy", "false");
   }
 }
 
-async function loadData() {
-  const leagueLabel = "KBO";
-  statusText.textContent = `${leagueLabel} 데이터를 불러오는 중...`;
+function renderTeamMessage(message) {
+  tableBody.innerHTML = `<tr><td colspan="6">${escapeHtml(message)}</td></tr>`;
+  if (metricsTableBody) {
+    metricsTableBody.innerHTML = `<tr><td colspan="10">${escapeHtml(message)}</td></tr>`;
+  }
+  metricsRowsCache = [];
+}
 
+async function loadTeams() {
+  statusText.dataset.state = "loading";
+  statusText.textContent = "현재 시즌 KBO 팀 기록을 불러오는 중...";
+  tableBody.setAttribute("aria-busy", "true");
+  metricsTableBody?.setAttribute("aria-busy", "true");
+  renderTeamMessage("팀 기록 조회 중...");
   try {
-    const response = await fetch(resolveApiUrl(FIXED_EXPONENT, "kbo"));
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+    const payload = await fetchJson(`/api/teams/pythagorean?exponent=${FIXED_EXPONENT}&league=kbo`);
+    if (!Array.isArray(payload.rows) || !Number.isFinite(Date.parse(payload.updatedAt))) {
+      throw new Error("팀 기록 또는 수집 시각을 확인할 수 없습니다.");
     }
-
-    const payload = await response.json();
     renderRows(payload.rows);
     renderMetricsRows(payload.rows);
-    await Promise.all([
-      loadDailyPredictions(),
-      (async () => {
-        try {
-          const modelResponse = await fetch("/api/model/status");
-          if (!modelResponse.ok) throw new Error(`HTTP ${modelResponse.status}`);
-          renderModelStatus(await modelResponse.json());
-        } catch (error) {
-          renderModelStatus({ status: "unavailable", unavailableReason: `모델 상태 조회 실패: ${error.message}` });
-        }
-      })(),
-    ]);
-
     const updatedTime = new Date(payload.updatedAt).toLocaleString("ko-KR", {
-      hour12: false,
+      timeZone: "Asia/Seoul", hour12: false,
     });
-    statusText.textContent = `${leagueLabel} 총 ${payload.teamCount}개 팀 / ${updatedTime} 업데이트`;
+    statusText.dataset.state = "ready";
+    statusText.textContent = `${payload.season} 시즌 · KBO ${payload.teamCount}개 팀 · ${updatedTime} (KST) 수집`;
   } catch (error) {
-    tableBody.innerHTML = "";
-    if (metricsTableBody) {
-      metricsTableBody.innerHTML = "";
-    }
-    metricsRowsCache = [];
-    dailyDateText.textContent = "-";
-    if (modelStatusRow) {
-      modelStatusRow.innerHTML = "";
-    }
-    dailyPredictionsList.innerHTML = '<p class="daily-empty">게임센터 자동 예측을 불러오지 못했습니다.</p>';
-      renderDailySummary([]);
-    statusText.textContent = `데이터 로드 실패: ${error.message}. npm start 실행 후 http://localhost:3000 으로 접속해 주세요.`;
+    renderTeamMessage("팀 기록을 불러오지 못했습니다.");
+    statusText.dataset.state = "error";
+    statusText.textContent = `팀 기록 조회 실패: ${error.message}`;
+  } finally {
+    tableBody.setAttribute("aria-busy", "false");
+    metricsTableBody?.setAttribute("aria-busy", "false");
   }
+}
+
+async function loadModelStatus() {
+  if (modelStatusRow) {
+    modelStatusRow.dataset.state = "loading";
+    modelStatusRow.setAttribute("aria-busy", "true");
+    modelStatusRow.textContent = "모델의 학습·검증 상태를 확인하는 중...";
+  }
+  try {
+    const payload = await fetchJson("/api/model/status");
+    renderModelStatus(payload);
+    if (modelStatusRow) modelStatusRow.dataset.state = "ready";
+  } catch (error) {
+    if (modelStatusRow) {
+      modelStatusRow.dataset.state = "error";
+      modelStatusRow.textContent = `모델 상태 확인 불가: ${error.message}`;
+    }
+  } finally {
+    modelStatusRow?.setAttribute("aria-busy", "false");
+  }
+}
+
+function loadData() {
+  if (refreshPromise) return refreshPromise;
+  const originalLabel = refreshButton.textContent;
+  refreshButton.disabled = true;
+  refreshButton.textContent = "조회 중...";
+  refreshButton.setAttribute("aria-busy", "true");
+  if (gameDateInput) gameDateInput.disabled = true;
+  if (includeFinishedInput) includeFinishedInput.disabled = true;
+  refreshPromise = Promise.allSettled([
+    loadTeams(),
+    loadModelStatus(),
+    loadDailyPredictions(),
+  ]).finally(() => {
+    refreshPromise = null;
+    refreshButton.disabled = false;
+    refreshButton.textContent = originalLabel;
+    refreshButton.setAttribute("aria-busy", "false");
+    if (gameDateInput) gameDateInput.disabled = false;
+    if (includeFinishedInput) includeFinishedInput.disabled = false;
+  });
+  return refreshPromise;
 }
 
 refreshButton.addEventListener("click", loadData);
+if (gameDateInput) {
+  gameDateInput.value = seoulDateInputValue();
+  gameDateInput.required = true;
+  gameDateInput.addEventListener("change", loadData);
+}
+if (includeFinishedInput) {
+  includeFinishedInput.checked = true;
+  includeFinishedInput.addEventListener("change", loadData);
+}
 dailyPredictionsList.addEventListener("click", (event) => {
   const downloadButton = event.target.closest(".daily-download-btn");
   if (!downloadButton) {
