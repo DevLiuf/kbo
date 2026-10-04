@@ -83,7 +83,14 @@ log(기대 득점) = log(리그 팀 경기당 득점) + 절편
 node scripts/helper-pc-train-and-tune.js --collectOnly=true --fetchResults=false --autoPush=true --baseUrl=https://kbo-predictor.vercel.app
 ```
 
-`--collectOnly=true --autoPush=true`는 예측 기록만 커밋·push합니다. 모델 재학습이나 모델 파일 교체는 하지 않습니다. 새로 수집한 행이 없어도 기존 유효 경기 전 기록을 발행하므로, 경기 시작 후 미전송 기록을 보내거나 실패한 push를 재시도할 때 같은 명령을 사용할 수 있습니다. 로컬 보관만 하려면 `--autoPush=false`를 지정하세요.
+`--collectOnly=true --autoPush=true`는 **웹 배포용 예측 파일만** 커밋·push합니다. 모델 재학습이나 모델 파일 교체는 하지 않습니다. 새로 수집한 행이 없어도 기존 유효 경기 전 예측을 발행하므로, 경기 시작 후 미전송 기록을 보내거나 실패한 push를 재시도할 때 같은 명령을 사용할 수 있습니다. 로컬 처리만 하려면 `--autoPush=false`를 지정하세요.
+
+- 수집·학습 원본은 `data/prediction_snapshots.ndjson`에 보존합니다. 이 누적 원본은 helper의 자동 push 대상이 아닙니다.
+- 웹 배포 파일은 `data/published_predictions.kbo.ndjson`입니다. 유효한 `ready` 경기 전 예측 중 경기별 마지막 기록만 담으며, 기존에 발행한 다른 경기 기록도 보존합니다. 서버는 이 파일만 읽습니다. 원본으로 되돌아가 읽는 fallback은 없습니다.
+- 승률·기대 득점·스코어·모델/관측 시각·라인업·화면에 쓰는 투수 지표는 유지하고, 반복된 원시 진단 이력과 구형·경기 후·예측 불가 기록은 배포 파일에서 제외합니다. 원본을 정리하거나 삭제하는 작업이 아닙니다.
+- 원본은 줄 단위로 읽어 배포본을 만들고, 배포본이 **10 MiB**를 넘으면 기존 배포 파일을 교체하지 않고 실패합니다. 임의로 오래된 경기 예측을 삭제해 용량을 맞추지 않습니다.
+- `--snapshots`는 원본, `--publishedSnapshots`는 배포본 경로입니다. 서로 또는 다른 산출물과 같은 경로를 지정할 수 없습니다. 운영 서버가 기본 파일명을 사용하므로 일반 실행에서는 기본 경로를 유지하세요.
+- 상태의 `snapshotHash`, `snapshotValidRows`, `snapshotBytes`는 **배포본**의 해시·예측 건수·바이트 수입니다. 원본 크기·전체 행 수와 다릅니다.
 
 ### Windows 자동 예약: 시작 시각 입력 불필요
 
@@ -173,7 +180,7 @@ npm run ml:helper-pc -- --autoPush=true --baseUrl=https://kbo-predictor.vercel.a
 - 데이터 수집 오류, 표본 부족, 겹치는 학습·검증 날짜, 검증 지표 악화는 종료 코드 1입니다. 실패를 학습 성공으로 보고하지 않습니다.
 - 검증 실패 시 기존 활성 **새 득점 모델**을 보존합니다. 처음 실행할 때 새 모델이 없으면 예측 불가 상태가 유지됩니다.
 - 성공적으로 수집한 입력과 결과는 이후 학습 실패에도 보존됩니다. 동시 배치는 배타 잠금으로 차단합니다.
-- 자동 push는 Git 저장소 안에서만 가능합니다. 다른 변경이 stage되어 있으면 중단합니다. 자동 pull·rebase·reset·강제 push는 하지 않습니다. 원격보다 뒤처져 push가 거절되면 수집 기록은 로컬에 남으며, 코드와 데이터 변경을 보존해 동기화한 후 재실행해야 합니다. 수집 전용 실행은 예측 기록만, 정상 학습 배포는 모델·일일 학습 상태와 존재하는 예측 기록을 함께 발행합니다.
+- 자동 push는 Git 저장소 안에서만 가능합니다. 다른 변경이 stage되어 있으면 중단합니다. 자동 pull·rebase·reset·강제 push는 하지 않습니다. 원격보다 뒤처져 push가 거절되면 수집 기록은 로컬에 남으며, 코드와 데이터 변경을 보존해 동기화한 후 재실행해야 합니다. 수집 전용 실행은 웹 배포본만, 정상 학습 배포는 모델·일일 학습 상태와 웹 배포본을 함께 발행합니다.
 - 배포 확인 기본값은 8회, 간격 15초입니다. `--verifyAttempts`, `--verifyDelayMs`, `--timeoutMs`로 조정합니다.
 - `deployment.state: "verified"`만 운영 반영 확인 성공입니다. `pushed_unverified`는 push는 됐지만 검증을 생략했거나 운영 반영을 확인하지 못한 상태입니다. Git 단계 실패는 `failed`, 자동 push 비활성·발행할 유효 기록 없음은 `not_deployed`와 `reason`으로 구분합니다. `--verifyDeployment=false`는 `pushed_unverified`입니다.
 - 상태는 `data/helper_status.kbo.json`, `data/daily_retrain_status.kbo.json`에서 확인합니다. `ok:true`만 보고 웹 반영까지 끝났다고 판단하지 마세요.
@@ -181,11 +188,23 @@ npm run ml:helper-pc -- --autoPush=true --baseUrl=https://kbo-predictor.vercel.a
 
 ### 예측 기록 배포 확인 API
 
-`GET /api/predictions/archive/status`는 인증 없는 읽기 전용 상태 API입니다. 요청 인자는 없으며 고정된 운영 예측 기록 파일의 정보만 반환합니다. `Cache-Control: no-store`를 사용합니다.
+`GET /api/predictions/archive/status`는 인증 없는 읽기 전용 상태 API입니다. 요청 인자는 없으며 고정된 웹 배포본의 정보만 반환합니다. 수집 원본의 해시가 아닙니다. `Cache-Control: no-store`를 사용합니다.
 
 - `200`: `{ "featureSchemaVersion": 3, "snapshotHash": "<SHA-256>" }`. 해시는 파일의 원본 바이트 전체 기준입니다. 파일이 없으면 `snapshotHash: null`입니다.
 - `503`: `{ "error": "Prediction archive status unavailable." }`. 파일 읽기 장애를 빈 파일로 처리하지 않습니다.
 - 원본 선수 기록·로컬 경로·쓰기 기능은 노출하지 않습니다. 해시 일치는 **파일 배포**를 확인할 뿐, 모든 행이 유효한 수치 예측이라는 뜻은 아닙니다. 웹은 기존 경기 전 시각·모델 입력·수치 검증을 그대로 적용합니다.
+
+### GitHub 대용량 파일 거절에서 복구
+
+이전 helper가 누적 원본을 커밋해 `GH001`로 거절됐다면, 최신 코드를 받는 것만으로 이미 생성된 대용량 로컬 커밋이 없어지지는 않습니다. 새 커밋에서 파일을 삭제해도 과거 커밋의 큰 blob이 전송되므로 해결되지 않습니다. helper는 미전송 이력의 100 MiB 초과 blob을 발견하면 추가 커밋·push 전에 중단합니다.
+
+1. 원본 파일을 저장소 밖에 복사하고, 거절된 로컬 HEAD를 별도 **로컬 백업 브랜치**로 보존합니다. 기존 stash도 그대로 둡니다.
+2. `git fetch origin main` 후 미전송 커밋이 정확히 하나이며, 그 커밋이 원본 예측 파일만 변경했는지 확인합니다. 다르면 아래 방식으로 임의 복구하지 마세요.
+3. 확인한 단일 거절 커밋에 한해서 `git reset --mixed HEAD^`로 커밋만 해제합니다. 작업 파일은 보존됩니다. `--hard`는 사용하지 않습니다.
+4. `git pull --ff-only origin main`이 성공하면 수집 전용 명령을 재실행합니다. 원본은 로컬에 남고 작은 웹 배포본만 push됩니다.
+5. 백업 브랜치는 복구 완료 전 삭제하지 말고, 대용량 커밋을 포함하므로 `git push --all`로 원격에 보내지 마세요.
+
+다른 로컬 커밋·stage 변경·pull 충돌이 있으면 먼저 그 내용을 확인해야 합니다. 기록을 지우거나 강제로 원격 이력을 바꾸지 마세요.
 
 ### 미니PC 진단 자료
 

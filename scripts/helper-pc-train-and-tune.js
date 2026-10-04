@@ -5,7 +5,8 @@ const { parseArgs } = require("./ml-utils");
 const {
   booleanFlag, integerFlag, runNodeScript, fetchIncrementalResults, validateTrainedModel, resolveOpeningDate,
 } = require("./retrain-daily");
-const { FEATURE_SCHEMA_VERSION, isPregameSnapshot } = require("../lib/prediction-contract");
+const { FEATURE_SCHEMA_VERSION } = require("../lib/prediction-contract");
+const { buildPublishedArchive } = require("../lib/published-predictions");
 const { MODEL_TYPE, validateModel } = require("../lib/score-model");
 const { rejectObsoleteOptions } = require("./score-training-utils");
 const {
@@ -44,13 +45,60 @@ async function codeRevision() {
   }
 }
 
-function git(args, cwd) {
-  const result = spawnSync("git", args, { cwd, encoding: "utf8", timeout: 5 * 60 * 1000 });
+function git(args, cwd, input) {
+  const result = spawnSync("git", args, { cwd, input, encoding: "utf8", timeout: 5 * 60 * 1000, maxBuffer: 64 * 1024 * 1024 });
   if (result.error) throw result.error;
   if (result.signal || result.status !== 0) {
     throw new Error(`autoPush failed: git ${args.join(" ")}: ${String(result.stderr || result.signal || result.status).trim()}`);
   }
   return String(result.stdout || "").trim();
+}
+
+const GIT_MAX_ARTIFACT_BYTES = 100 * 1024 * 1024;
+
+async function assertDistinctArtifactPaths(paths) {
+  const identities = [];
+  const canonicalPath = async (file) => {
+    try {
+      return await fs.realpath(file);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      try {
+        const link = await fs.readlink(file);
+        return canonicalPath(path.resolve(path.dirname(file), link));
+      } catch (linkError) {
+        if (!["ENOENT", "EINVAL"].includes(linkError.code)) throw linkError;
+      }
+      return path.join(await canonicalPath(path.dirname(file)), path.basename(file));
+    }
+  };
+  for (const [name, file] of Object.entries(paths)) {
+    const canonical = await canonicalPath(file);
+    let stat;
+    try { stat = await fs.stat(file); } catch (error) { if (error.code !== "ENOENT") throw error; }
+    for (const previous of identities) {
+      if (canonical === previous.canonical || canonical.startsWith(`${previous.canonical}${path.sep}`)
+        || previous.canonical.startsWith(`${canonical}${path.sep}`)
+        || (stat && previous.stat && stat.dev === previous.stat.dev && stat.ino === previous.stat.ino)) {
+        throw new Error(`Artifact paths must be distinct: --${name} collides with --${previous.name}; raw snapshots must never be overwritten`);
+      }
+    }
+    identities.push({ name, canonical, stat });
+  }
+}
+
+function assertOutgoingBlobSizes(root) {
+  const objects = git(["rev-list", "--objects", "HEAD", "--not", "--remotes"], root);
+  if (!objects) return;
+  const sizes = git(["cat-file", "--batch-check=%(objecttype) %(objectsize) %(objectname) %(rest)"], root, `${objects}\n`);
+  for (const line of sizes.split("\n")) {
+    const [type, size, object, ...name] = line.split(" ");
+    if (type === "blob" && Number(size) > GIT_MAX_ARTIFACT_BYTES) {
+      throw new Error(`autoPush refuses pending oversized Git blob ${name.join(" ") || object} (${size} bytes; limit 100 MiB). `
+        + "Back up the complete raw snapshots and local repository first, then recover the rejected local commit history before retrying. "
+        + "Deleting or untracking the file in a new commit does not remove the oversized blob from outgoing history. No reset, commit or push was attempted.");
+    }
+  }
 }
 
 function deploymentPreflight(files, cwd) {
@@ -70,12 +118,19 @@ function deploymentPreflight(files, cwd) {
   assertStagedTargets();
   const branch = git(["branch", "--show-current"], root);
   if (!branch) throw new Error("autoPush refuses detached HEAD");
+  assertOutgoingBlobSizes(root);
   return { root, targetFiles, branch, assertStagedTargets };
 }
 
-function autoCommitAndPush(preflight, commitMessage) {
+async function autoCommitAndPush(preflight, commitMessage) {
   const { root, targetFiles, branch, assertStagedTargets } = preflight;
   assertStagedTargets();
+  for (const file of targetFiles) {
+    const { size } = await fs.stat(path.join(root, file));
+    if (size > GIT_MAX_ARTIFACT_BYTES) {
+      throw new Error(`autoPush refuses oversized artifact ${file} (${size} bytes; limit 100 MiB) before git add/commit. Preserve the original and publish bounded artifacts only.`);
+    }
+  }
   git(["add", "--", ...targetFiles], root);
   assertStagedTargets();
   const changed = git(["diff", "--cached", "--name-only", "--", ...targetFiles], root);
@@ -136,6 +191,7 @@ async function main() {
   const to = String(args.to || today);
   const paths = {
     snapshots: path.resolve(String(args.snapshots || "data/prediction_snapshots.ndjson")),
+    publishedSnapshots: path.resolve(String(args.publishedSnapshots || "data/published_predictions.kbo.ndjson")),
     historical: path.resolve(String(args.historical || "data/historical_inputs.kbo.ndjson")),
     results: path.resolve(String(args.results || "data/game_results.kbo.ndjson")),
     examples: path.resolve(String(args.examples || "data/run_training_examples.kbo.ndjson")),
@@ -143,11 +199,13 @@ async function main() {
     retrainStatus: path.resolve(String(args.retrainStatus || "data/daily_retrain_status.kbo.json")),
     status: path.resolve(String(args.status || "data/helper_status.kbo.json")),
   };
-  const release = await acquireLock(path.resolve(String(args.lock || `${paths.model}.helper.lock`)));
+  const lockPath = path.resolve(String(args.lock || `${paths.model}.helper.lock`));
+  await assertDistinctArtifactPaths({ ...paths, lock: lockPath });
+  const release = await acquireLock(lockPath);
   const status = {
     ok: false, startedAt: new Date().toISOString(), stage: "configuration", failure: null,
     from, to, featureSchemaVersion: FEATURE_SCHEMA_VERSION, modelType: MODEL_TYPE,
-    modelVersion: null, modelHash: null, snapshotHash: null, snapshotValidRows: 0,
+    modelVersion: null, modelHash: null, snapshotHash: null, snapshotValidRows: 0, snapshotBytes: 0,
     codeRevision: null, deployment: { state: "not_deployed" },
   };
   let staging;
@@ -188,7 +246,12 @@ async function main() {
     await fs.mkdir(path.dirname(paths.model), { recursive: true });
     staging = await fs.mkdtemp(path.join(path.dirname(paths.model), ".helper-"));
     const staged = Object.fromEntries(Object.keys(paths).map((key) => [key, path.join(staging, `${key}-${path.basename(paths[key])}`)]));
-    await atomicWrite(staged.snapshots, ndjson(await readNdjson(paths.snapshots, { allowMissing: true })));
+    try {
+      await fs.copyFile(paths.snapshots, staged.snapshots);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      await fs.writeFile(staged.snapshots, "");
+    }
     await copyIfPresent(paths.results, staged.results);
     if (!collectOnly) await atomicWrite(staged.historical, ndjson(await readNdjson(paths.historical, { allowMissing: bootstrapHistorical || args.historical === undefined })));
     const setStage = async (stage) => {
@@ -197,7 +260,7 @@ async function main() {
     };
     const deploy = async (preflight, includeModel) => {
       await setStage("deploy");
-      status.deployment = autoCommitAndPush(preflight, String(args.commitMessage
+      status.deployment = await autoCommitAndPush(preflight, String(args.commitMessage
         || (includeModel ? "Update confirmed-lineup run model and snapshots" : "Publish pregame prediction snapshots")));
       await writeJson(paths.status, status);
       if (!shouldVerify) return;
@@ -227,13 +290,10 @@ async function main() {
     } else {
       status.snapshotCollection = "skipped_historical";
     }
-    try {
-      status.snapshotHash = sha256(await fs.readFile(paths.snapshots));
-      status.snapshotValidRows = (await readNdjson(staged.snapshots))
-        .filter((row) => isPregameSnapshot(row) && String(row.gameKey || row.gameId || "").trim()).length;
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
+    const publication = await buildPublishedArchive(paths.snapshots, paths.publishedSnapshots);
+    status.snapshotHash = publication.snapshotHash;
+    status.snapshotValidRows = publication.snapshotValidRows;
+    status.snapshotBytes = publication.snapshotBytes;
     if (bootstrapHistorical) {
       await setStage("bootstrap-historical");
       const historicalTo = to < today ? to : shiftDate(today, -1);
@@ -260,10 +320,10 @@ async function main() {
     if (collectOnly) {
       if (autoPush) {
         if (status.snapshotHash === null || status.snapshotValidRows === 0) {
-          status.deployment.reason = status.snapshotHash === null ? "no_snapshot_archive" : "no_valid_pregame_rows";
+          status.deployment.reason = publication.sourceMissing ? "no_snapshot_archive" : "no_valid_pregame_rows";
         } else {
           await setStage("deploy-preflight");
-          const preflight = deploymentPreflight([paths.snapshots], process.cwd());
+          const preflight = deploymentPreflight([paths.publishedSnapshots], process.cwd());
           await deploy(preflight, false);
         }
       }
@@ -303,7 +363,7 @@ async function main() {
     if (autoPush) {
       await setStage("deploy-preflight");
       preflight = deploymentPreflight([
-        paths.model, paths.retrainStatus, ...(status.snapshotHash === null ? [] : [paths.snapshots]),
+        paths.model, paths.retrainStatus, ...(status.snapshotHash === null ? [] : [paths.publishedSnapshots]),
       ], process.cwd());
     }
     await setStage("promote");

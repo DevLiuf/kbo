@@ -24,7 +24,8 @@ test("deployed archive identity distinguishes missing, changed and unreadable fi
   });
   const base = `http://127.0.0.1:${server.address().port}`;
   const url = `${base}/api/predictions/archive/status`;
-  const file = path.join(directory, "prediction_snapshots.ndjson");
+  const file = path.join(directory, "published_predictions.kbo.ndjson");
+  await fs.writeFile(path.join(directory, "prediction_snapshots.ndjson"), "raw input is not the published archive\n");
   const missing = await fetch(url);
   assert.equal(missing.status, 200);
   assert.equal(missing.headers.get("cache-control"), "no-store");

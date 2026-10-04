@@ -10,12 +10,13 @@ const { FEATURE_SCHEMA_VERSION, MODEL_TYPE, isPregameSnapshot } = require("./lib
 const { validateModel, validateInputs, predictGame } = require("./lib/score-model");
 const { collectConfirmedInputs } = require("./lib/kbo-confirmed-data");
 const { assertDateRange, readNdjson, seoulToday } = require("./lib/artifacts");
+const { isPublishablePrediction } = require("./lib/published-predictions");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.resolve(process.env.KBO_DATA_DIR || path.join(__dirname, "data"));
 const MODEL_FILE = path.join(DATA_DIR, "run_model.kbo.json");
-const SNAPSHOT_FILE = path.join(DATA_DIR, "prediction_snapshots.ndjson");
+const SNAPSHOT_FILE = path.join(DATA_DIR, "published_predictions.kbo.ndjson");
 const KBO_HITTER_URL = "https://www.koreabaseball.com/Record/Team/Hitter/Basic1.aspx";
 const KBO_PITCHER_URL = "https://www.koreabaseball.com/Record/Team/Pitcher/Basic1.aspx";
 const KBO_GAME_LIST_URL = "https://www.koreabaseball.com/ws/Main.asmx/GetKboGameList";
@@ -146,20 +147,11 @@ function unavailable(metadata, code, reason, details = {}) {
     predictedWinner: null, predictedRunDiff: null, tieAfterNineProbability: null, predictionHit: null };
 }
 
-function validArchivedPrediction(row) {
-  return isPregameSnapshot(row) && row.status === "ready" && row.modelType === MODEL_TYPE
-    && [row.homeWinProbability, row.awayWinProbability, row.tieAfterNineProbability]
-      .every((value) => Number.isFinite(value) && value >= 0 && value <= 1)
-    && Math.abs(row.homeWinProbability + row.awayWinProbability - 1) < 1e-9
-    && [row.expectedAwayRuns, row.expectedHomeRuns].every((value) => Number.isFinite(value) && value > 0)
-    && [row.predictedAwayScore, row.predictedHomeScore].every((value) => Number.isInteger(value) && value >= 0);
-}
-
 async function archivedPredictions() {
   const rows = await readNdjson(SNAPSHOT_FILE, { allowMissing: true });
   const latest = new Map();
   for (const row of rows) {
-    if (!validArchivedPrediction(row)) continue;
+    if (!isPublishablePrediction(row)) continue;
     const prior = latest.get(row.gameKey);
     if (!prior || Date.parse(row.asOfTimestamp) > Date.parse(prior.asOfTimestamp)) latest.set(row.gameKey, row);
   }
