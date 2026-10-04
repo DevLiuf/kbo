@@ -77,11 +77,13 @@ log(기대 득점) = log(리그 팀 경기당 득점) + 절편
 
 실시간 유효 입력은 스키마 3, 예정 상태, 양 팀 공식 라인업 확정, 검증된 `modelInputs`, 서울시간 경기일, 실제 시작 시각과 **시작보다 엄격히 이른 수집 시각**을 갖춰야 합니다. 데이터 기준 시각은 수집 시각보다 늦을 수 없습니다. 학습에는 경기별 마지막 유효 실시간 입력을 사용하며, 없으면 아래 별도 과거 복원 자료를 사용합니다.
 
-웹 API 조회는 파일에 쓰지 않습니다. 미니PC의 **경기 시작 전 수집 작업**으로 실시간 입력을 보관합니다. 기본 02시 작업은 과거 입력을 소급 수집하지 않습니다. 첫 학습용 과거 자료는 아래 복원 명령으로 별도 준비합니다.
+웹 API 조회는 파일에 쓰지 않습니다. 미니PC의 **경기 시작 전 수집 작업**으로 실시간 입력을 보관합니다. Git 작업 폴더에서는 저장된 예측 기록을 push하고 Vercel 자동 배포의 파일 해시까지 확인해야 웹에서 진행·종료 경기의 예측을 조회할 수 있습니다. 기본 02시 작업은 과거 입력을 소급 수집하지 않습니다.
 
 ```bash
-node scripts/helper-pc-train-and-tune.js --collectOnly=true --fetchResults=false --baseUrl=https://kbo-predictor.vercel.app
+node scripts/helper-pc-train-and-tune.js --collectOnly=true --fetchResults=false --autoPush=true --baseUrl=https://kbo-predictor.vercel.app
 ```
+
+`--collectOnly=true --autoPush=true`는 예측 기록만 커밋·push합니다. 모델 재학습이나 모델 파일 교체는 하지 않습니다. 새로 수집한 행이 없어도 기존 유효 경기 전 기록을 발행하므로, 경기 시작 후 미전송 기록을 보내거나 실패한 push를 재시도할 때 같은 명령을 사용할 수 있습니다. 로컬 보관만 하려면 `--autoPush=false`를 지정하세요.
 
 ### Windows 자동 예약: 시작 시각 입력 불필요
 
@@ -101,12 +103,13 @@ if ($?) {
 
 - `KBO-AutoCollect-Plan`: 매일 서울시간 03:00 및 해당 계정 로그인 시 공식 당일 일정을 조회합니다. 설치 직후에도 조회합니다.
 - `KBO-AutoCollect-YYYYMMDD`: 실제 시작 **30·25·20·15·10·5분 전**에만 실행합니다. 시작 시간이 같은 경기는 한 번에 처리합니다. 24시간 5분 반복은 없습니다.
+- Git 작업 폴더의 예약 수집은 예측 기록을 자동 push하고 운영 사이트의 SHA-256 일치를 확인합니다. `.git`이 없는 단독 압축본은 로컬 수집만 합니다. 기존 예약은 같은 스크립트를 호출하므로 코드 갱신 후 재설치 없이 다음 실행부터 적용됩니다.
 - 각 실행에서 공식 일정을 다시 조회하고 남은 예약을 갱신합니다. 취소·진행·종료·비정규시즌 경기는 제외합니다. 일정 조회 실패 시 이전 예약을 지우지 않고 실패로 종료합니다.
 - 시작 전 30분보다 이른 입력과 시작 이후 입력은 보관하지 않습니다. 시간이 늦어진 경기에는 남은 예약을 다시 잡습니다. 경기 없는 날에는 일별 수집 작업을 만들지 않습니다.
 - 기존 **02시 `kbo-helper` 결과 수집·학습·배포 작업은 그대로 유지**합니다. 앞서 수동으로 만든 경기 전 반복 작업이 있다면 중복 실행을 막기 위해 사용 안 함으로 바꾸세요.
 - **설치한 계정이 로그인된 상태여야 합니다.** 화면 잠금은 가능하지만 로그아웃 상태에서는 실행되지 않습니다. Windows 시간대를 `(UTC+09:00) 서울`로 맞추고, 수집 시간에는 PC와 네트워크가 켜져 있어야 합니다. 절전 해제는 Windows의 깨우기 타이머 설정에도 좌우됩니다.
 - 로그인·03시 조회 이후 새로 추가되거나 크게 앞당겨진 경기는 다음 조회 전까지 놓칠 수 있습니다. 일정 변경을 알게 된 경우 `node scripts/auto-collect-pregame.js`를 실행해 즉시 다시 예약합니다.
-- 설치나 실행 실패는 종료 코드 1입니다. 작업 스케줄러의 마지막 실행 결과와 `data/helper_status.kbo.json`의 `stage: "collected"`, `snapshotRowsCollected`를 확인하세요. `0`은 새 유효 입력이 없다는 뜻이며 학습·배포 성공을 뜻하지 않습니다.
+- 설치나 실행 실패는 종료 코드 1입니다. 작업 스케줄러의 마지막 실행 결과와 `data/helper_status.kbo.json`의 `stage`, `snapshotRowsCollected`, `snapshotHash`, `deployment`를 확인하세요. `snapshotRowsCollected: 0`은 이번에 새 입력이 없다는 뜻이며 기존 기록의 발행 성공·실패와 별개입니다.
 
 예약 변경 없이 공식 일정과 예정 수집 시각을 확인하는 명령(Windows 외에서도 사용 가능):
 
@@ -170,11 +173,36 @@ npm run ml:helper-pc -- --autoPush=true --baseUrl=https://kbo-predictor.vercel.a
 - 데이터 수집 오류, 표본 부족, 겹치는 학습·검증 날짜, 검증 지표 악화는 종료 코드 1입니다. 실패를 학습 성공으로 보고하지 않습니다.
 - 검증 실패 시 기존 활성 **새 득점 모델**을 보존합니다. 처음 실행할 때 새 모델이 없으면 예측 불가 상태가 유지됩니다.
 - 성공적으로 수집한 입력과 결과는 이후 학습 실패에도 보존됩니다. 동시 배치는 배타 잠금으로 차단합니다.
-- 자동 push는 Git 저장소 안에서만 가능합니다. 다른 변경이 stage되어 있으면 중단하고 자동 rebase하지 않습니다. 자동 배포 대상은 새 모델과 일일 학습 상태입니다.
+- 자동 push는 Git 저장소 안에서만 가능합니다. 다른 변경이 stage되어 있으면 중단합니다. 자동 pull·rebase·reset·강제 push는 하지 않습니다. 원격보다 뒤처져 push가 거절되면 수집 기록은 로컬에 남으며, 코드와 데이터 변경을 보존해 동기화한 후 재실행해야 합니다. 수집 전용 실행은 예측 기록만, 정상 학습 배포는 모델·일일 학습 상태와 존재하는 예측 기록을 함께 발행합니다.
 - 배포 확인 기본값은 8회, 간격 15초입니다. `--verifyAttempts`, `--verifyDelayMs`, `--timeoutMs`로 조정합니다.
-- `--verifyDeployment=false`는 `pushed_unverified`이며 배포 확인 성공이 아닙니다. 압축본 단독 실행은 `not_deployed`입니다.
+- `deployment.state: "verified"`만 운영 반영 확인 성공입니다. `pushed_unverified`는 push는 됐지만 검증을 생략했거나 운영 반영을 확인하지 못한 상태입니다. Git 단계 실패는 `failed`, 자동 push 비활성·발행할 유효 기록 없음은 `not_deployed`와 `reason`으로 구분합니다. `--verifyDeployment=false`는 `pushed_unverified`입니다.
 - 상태는 `data/helper_status.kbo.json`, `data/daily_retrain_status.kbo.json`에서 확인합니다. `ok:true`만 보고 웹 반영까지 끝났다고 판단하지 마세요.
 - 새 활성 모델은 `data/run_model.kbo.json`, 예제는 `data/run_training_examples.kbo.ndjson`입니다. 기존 모델·튜닝 데이터는 자동 삭제하지 않지만 새 예측 경로에서 읽지 않습니다.
+
+### 예측 기록 배포 확인 API
+
+`GET /api/predictions/archive/status`는 인증 없는 읽기 전용 상태 API입니다. 요청 인자는 없으며 고정된 운영 예측 기록 파일의 정보만 반환합니다. `Cache-Control: no-store`를 사용합니다.
+
+- `200`: `{ "featureSchemaVersion": 3, "snapshotHash": "<SHA-256>" }`. 해시는 파일의 원본 바이트 전체 기준입니다. 파일이 없으면 `snapshotHash: null`입니다.
+- `503`: `{ "error": "Prediction archive status unavailable." }`. 파일 읽기 장애를 빈 파일로 처리하지 않습니다.
+- 원본 선수 기록·로컬 경로·쓰기 기능은 노출하지 않습니다. 해시 일치는 **파일 배포**를 확인할 뿐, 모든 행이 유효한 수치 예측이라는 뜻은 아닙니다. 웹은 기존 경기 전 시각·모델 입력·수치 검증을 그대로 적용합니다.
+
+### 미니PC 진단 자료
+
+PowerShell에서는 UTF-8을 명시해 읽습니다. 콘솔의 깨진 JSON을 다시 저장해 원본을 덮어쓰지 마세요.
+
+```powershell
+Get-Content -Encoding UTF8 .\data\helper_status.kbo.json
+git status --short
+$today = Get-Date -Format yyyyMMdd
+Get-Content -Encoding UTF8 .\data\prediction_snapshots.ndjson |
+  ForEach-Object { $_ | ConvertFrom-Json } |
+  Where-Object { $_.gameDate -eq $today } |
+  Select-Object gameDate, gameKey, asOfTimestamp, gameStartsAt, status, lineupConfirmed, unavailableCode |
+  Format-Table -AutoSize
+```
+
+원본 검증이 필요하면 예측 기록 NDJSON 파일 자체를 전달하세요. 로컬 `modelVersion: null`이어도 원격 API에서 계산해 저장한 각 행에는 유효한 모델 버전과 수치 예측이 있을 수 있습니다.
 
 ### Windows와 미니PC 압축본
 

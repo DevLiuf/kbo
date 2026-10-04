@@ -1,5 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs/promises");
+const os = require("node:os");
+const path = require("node:path");
 const { planCollection, collectIfDue } = require("../scripts/auto-collect-pregame");
 const game = (id, time, extra = {}) => ({ G_DT: "20261003", G_ID: id, G_TM: time, GAME_STATE_SC: "1", SR_ID: "0", CANCEL_SC_ID: "0", CANCEL_SC_NM: "정상경기", ...extra });
 
@@ -36,4 +39,37 @@ test("the final clock check rejects early and late launches, including a crossed
     assert.equal(await collectIfDue(plan, { clock: () => new Date(`2026-10-03T${time}+09:00`), run }), expected);
   }
   assert.equal(count, 2);
+});
+
+test("scheduled collection publishes from checkouts and worktrees but keeps standalone helpers local", async (t) => {
+  const parent = await fs.mkdtemp(path.join(os.tmpdir(), "kbo scheduled helper "));
+  t.after(() => fs.rm(parent, { recursive: true, force: true }));
+  // An extracted helper nested in a checkout still must not publish from its parent.
+  await fs.mkdir(path.join(parent, ".git"));
+  const gitdir = path.join(parent, ".git", "worktrees", "helper");
+  await fs.mkdir(gitdir, { recursive: true });
+  const now = new Date("2026-10-03T13:35:00+09:00");
+  const plan = planCollection([game("a", "14:00")], now);
+  const baseUrl = "https://kbo-predictor.vercel.app";
+
+  for (const [mode, autoPush] of [["checkout", true], ["worktree", true], ["standalone", false]]) {
+    await t.test(mode, async () => {
+      const root = path.join(parent, mode);
+      await fs.mkdir(root);
+      if (mode === "checkout") await fs.mkdir(path.join(root, ".git"));
+      if (mode === "worktree") await fs.writeFile(path.join(root, ".git"), `gitdir: ${path.relative(root, gitdir)}\n`);
+      const calls = [];
+      assert.equal(await collectIfDue(plan, {
+        baseUrl,
+        root,
+        clock: () => now,
+        run: async (...args) => { calls.push(args); },
+      }), true);
+      assert.deepEqual(calls, [[
+        "helper-pc-train-and-tune.js",
+        ["--collectOnly=true", "--fetchResults=false", `--autoPush=${autoPush}`, "--pregameWindowMinutes=30", "--from=20261003", "--to=20261003", "--timeoutMs=60000", `--baseUrl=${baseUrl}`],
+        { cwd: root, timeoutMs: 25 * 60000 },
+      ]]);
+    });
+  }
 });

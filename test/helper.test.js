@@ -197,7 +197,7 @@ test("first collect-only run needs no results file and archives only the 30-minu
   const tooEarly = snapshot(today, "too-early", { asOfTimestamp: new Date(Date.parse(row.gameStartsAt) - 30 * 60000 - 1).toISOString() });
   await fs.writeFile(path.join(directory, "model.json"), '{"version":"legacy-user-artifact"}\n');
   const baseUrl = await fixtureServer(t, (_req, res) => res.end(JSON.stringify({ date: today, asOfTimestamp: row.asOfTimestamp, predictions: [tooEarly, row] })));
-  const result = await cli("helper-pc-train-and-tune.js", [`--from=${today}`, `--baseUrl=${baseUrl}`, "--fetchResults=false", "--collectOnly=true", "--autoPush=true", "--pregameWindowMinutes=30",
+  const result = await cli("helper-pc-train-and-tune.js", [`--from=${today}`, `--baseUrl=${baseUrl}`, "--fetchResults=false", "--collectOnly=true", "--autoPush=false", "--pregameWindowMinutes=30",
     "--snapshots=snapshots.ndjson", "--results=results.ndjson", "--model=model.json", "--status=helper.json"], directory);
   assert.equal(result.code, 0, result.stderr);
   assert.equal(await fs.readFile(path.join(directory, "model.json"), "utf8"), '{"version":"legacy-user-artifact"}\n');

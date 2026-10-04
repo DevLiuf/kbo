@@ -217,6 +217,21 @@ app.get("/api/model/status", async (_req, res) => {
 
 app.get("/api/teams/pythagorean", async (req, res) => {
   if (String(req.query.league || "kbo").toLowerCase() !== "kbo") return res.status(400).json({ error: "KBO-only service: league must be kbo." });
+app.get("/api/predictions/archive/status", async (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const bytes = await fs.readFile(SNAPSHOT_FILE);
+    res.json({ featureSchemaVersion: FEATURE_SCHEMA_VERSION,
+      snapshotHash: createHash("sha256").update(bytes).digest("hex") });
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return res.json({ featureSchemaVersion: FEATURE_SCHEMA_VERSION, snapshotHash: null });
+    }
+    console.error("Prediction archive status failed", error);
+    res.status(503).json({ error: "Prediction archive status unavailable." });
+  }
+});
+
   const exponent = req.query.exponent === undefined ? DEFAULT_EXPONENT : number(req.query.exponent);
   if (exponent === null || exponent < 0.1 || exponent > 10) return res.status(400).json({ error: "exponent must be between 0.1 and 10." });
   try {

@@ -80,12 +80,18 @@ async function applyPlan(plan, sid, baseUrl) {
   }
   for (const old of names) if (old !== name || !plan.slots.length) command("schtasks.exe", ["/Delete", "/TN", old, "/F"]);
 }
-async function collectIfDue(plan, { baseUrl, clock = () => new Date(), run = runNodeScript } = {}) {
+async function collectIfDue(plan, { baseUrl, root = ROOT, clock = () => new Date(), run = runNodeScript } = {}) {
+  const git = await fs.stat(path.join(root, ".git")).catch((error) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  // A checkout has a .git directory or a worktree's .git pointer file; ZIP helpers have neither.
+  const autoPush = Boolean(git && (git.isDirectory() || git.isFile()));
   // Recheck after schedule lookup/task registration; never launch late or too early.
   const now = clock().getTime();
   const due = plan.windows.filter((window) => Date.parse(window.opensAt) <= now && now < Date.parse(window.startsAt));
   if (!due.length) return false;
-  await run("helper-pc-train-and-tune.js", ["--collectOnly=true", "--fetchResults=false", "--autoPush=false", "--pregameWindowMinutes=30", `--from=${plan.date}`, `--to=${plan.date}`, "--timeoutMs=60000", `--baseUrl=${baseUrl}`], { cwd: ROOT, timeoutMs: 25 * 60000 });
+  await run("helper-pc-train-and-tune.js", ["--collectOnly=true", "--fetchResults=false", `--autoPush=${autoPush}`, "--pregameWindowMinutes=30", `--from=${plan.date}`, `--to=${plan.date}`, "--timeoutMs=60000", `--baseUrl=${baseUrl}`], { cwd: root, timeoutMs: 25 * 60000 });
   return true;
 }
 async function main() {

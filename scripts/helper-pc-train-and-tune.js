@@ -5,7 +5,7 @@ const { parseArgs } = require("./ml-utils");
 const {
   booleanFlag, integerFlag, runNodeScript, fetchIncrementalResults, validateTrainedModel, resolveOpeningDate,
 } = require("./retrain-daily");
-const { FEATURE_SCHEMA_VERSION } = require("../lib/prediction-contract");
+const { FEATURE_SCHEMA_VERSION, isPregameSnapshot } = require("../lib/prediction-contract");
 const { MODEL_TYPE, validateModel } = require("../lib/score-model");
 const { rejectObsoleteOptions } = require("./score-training-utils");
 const {
@@ -56,10 +56,11 @@ function git(args, cwd) {
 function deploymentPreflight(files, cwd) {
   if (git(["rev-parse", "--is-inside-work-tree"], cwd) !== "true") throw new Error("autoPush requires a git repository");
   const root = git(["rev-parse", "--show-toplevel"], cwd);
-  const targetFiles = files.map((file) => path.relative(root, file));
-  if (targetFiles.some((file) => file === ".." || file.startsWith(`..${path.sep}`) || path.isAbsolute(file))) {
+  const relativeFiles = files.map((file) => path.relative(root, file));
+  if (relativeFiles.some((file) => file === ".." || file.startsWith(`..${path.sep}`) || path.isAbsolute(file))) {
     throw new Error("autoPush artifact paths must be inside the repository");
   }
+  const targetFiles = relativeFiles.map((file) => file.split(path.sep).join("/"));
   const allowed = new Set(targetFiles);
   const assertStagedTargets = () => {
     const staged = git(["diff", "--cached", "--name-only", "-z"], root).split("\0").filter(Boolean);
@@ -80,7 +81,7 @@ function autoCommitAndPush(preflight, commitMessage) {
   const changed = git(["diff", "--cached", "--name-only", "--", ...targetFiles], root);
   if (changed) git(["commit", "--only", "-m", commitMessage, "--", ...targetFiles], root);
   git(["push"], root);
-  return { state: "pushed", committed: Boolean(changed), branch };
+  return { state: "pushed_unverified", committed: Boolean(changed), branch };
 }
 
 async function verifyDeployment(baseUrl, expected, { attempts, delayMs, timeoutMs }) {
@@ -106,6 +107,27 @@ async function verifyDeployment(baseUrl, expected, { attempts, delayMs, timeoutM
   throw new Error(`Deployment verification failed after ${attempts} attempts: ${failure.message}`);
 }
 
+async function verifySnapshotDeployment(baseUrl, snapshotHash, { attempts, delayMs, timeoutMs }) {
+  let failure;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetch(`${baseUrl}/api/predictions/archive/status`, {
+        signal: AbortSignal.timeout(timeoutMs), headers: { "Cache-Control": "no-cache" },
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const remote = await response.json();
+      if (remote.featureSchemaVersion !== FEATURE_SCHEMA_VERSION || remote.snapshotHash !== snapshotHash) {
+        throw new Error("Remote snapshot schema/hash do not match saved archive");
+      }
+      return { state: "verified", verifiedAt: new Date().toISOString(), attempts: attempt, remote };
+    } catch (error) {
+      failure = error;
+      if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw new Error(`Snapshot deployment verification failed after ${attempts} attempts: ${failure.message}`);
+}
+
 async function main() {
   assertSupportedRuntime();
   const args = parseArgs(process.argv.slice(2));
@@ -125,7 +147,8 @@ async function main() {
   const status = {
     ok: false, startedAt: new Date().toISOString(), stage: "configuration", failure: null,
     from, to, featureSchemaVersion: FEATURE_SCHEMA_VERSION, modelType: MODEL_TYPE,
-    modelVersion: null, modelHash: null, codeRevision: null, deployment: { state: "not_deployed" },
+    modelVersion: null, modelHash: null, snapshotHash: null, snapshotValidRows: 0,
+    codeRevision: null, deployment: { state: "not_deployed" },
   };
   let staging;
   let promoted = false;
@@ -136,6 +159,7 @@ async function main() {
     status.from = from;
     assertDateRange(from, to);
     autoPush = booleanFlag(args.autoPush ?? process.env.HELPER_PC_AUTO_PUSH, false);
+    if (!autoPush) status.deployment.reason = "auto_push_disabled";
     const collectOnly = booleanFlag(args.collectOnly, false);
     const fetchResults = booleanFlag(args.fetchResults, true);
     const bootstrapHistorical = booleanFlag(args.bootstrapHistorical, false);
@@ -171,6 +195,21 @@ async function main() {
       status.stage = stage;
       await writeJson(paths.status, status);
     };
+    const deploy = async (preflight, includeModel) => {
+      await setStage("deploy");
+      status.deployment = autoCommitAndPush(preflight, String(args.commitMessage
+        || (includeModel ? "Update confirmed-lineup run model and snapshots" : "Publish pregame prediction snapshots")));
+      await writeJson(paths.status, status);
+      if (!shouldVerify) return;
+      await setStage("verify-deployment");
+      const options = { attempts: verifyAttempts, delayMs: verifyDelayMs, timeoutMs: httpTimeoutMs };
+      if (includeModel) status.deployment.modelVerification = await verifyDeployment(baseUrl, status, options);
+      if (status.snapshotHash !== null) {
+        status.deployment.snapshotVerification = await verifySnapshotDeployment(baseUrl, status.snapshotHash, options);
+      }
+      status.deployment.state = "verified";
+      status.deployment.verifiedAt = new Date().toISOString();
+    };
     await setStage("collect-snapshots");
     if (to >= today) {
       const previousSnapshots = new Set((await readNdjson(staged.snapshots, { allowMissing: true })).map((row) => JSON.stringify(row)));
@@ -187,6 +226,13 @@ async function main() {
       } else status.snapshotCollection = "no_pregame_rows";
     } else {
       status.snapshotCollection = "skipped_historical";
+    }
+    try {
+      status.snapshotHash = sha256(await fs.readFile(paths.snapshots));
+      status.snapshotValidRows = (await readNdjson(staged.snapshots))
+        .filter((row) => isPregameSnapshot(row) && String(row.gameKey || row.gameId || "").trim()).length;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
     }
     if (bootstrapHistorical) {
       await setStage("bootstrap-historical");
@@ -212,6 +258,15 @@ async function main() {
       status.fetchFrom = null;
     }
     if (collectOnly) {
+      if (autoPush) {
+        if (status.snapshotHash === null || status.snapshotValidRows === 0) {
+          status.deployment.reason = status.snapshotHash === null ? "no_snapshot_archive" : "no_valid_pregame_rows";
+        } else {
+          await setStage("deploy-preflight");
+          const preflight = deploymentPreflight([paths.snapshots], process.cwd());
+          await deploy(preflight, false);
+        }
+      }
       Object.assign(status, { ok: true, stage: "collected", finishedAt: new Date().toISOString() });
       await writeJson(paths.status, status);
       console.log(JSON.stringify(status, null, 2));
@@ -247,7 +302,9 @@ async function main() {
     let preflight;
     if (autoPush) {
       await setStage("deploy-preflight");
-      preflight = deploymentPreflight([paths.model, paths.retrainStatus], process.cwd());
+      preflight = deploymentPreflight([
+        paths.model, paths.retrainStatus, ...(status.snapshotHash === null ? [] : [paths.snapshots]),
+      ], process.cwd());
     }
     await setStage("promote");
     await writeJson(staged.status, status);
@@ -258,17 +315,7 @@ async function main() {
       { source: staged.status, target: paths.status },
     ]);
     promoted = true;
-    if (autoPush) {
-      await setStage("deploy");
-      status.deployment = autoCommitAndPush(preflight, String(args.commitMessage || "Update confirmed-lineup run model"));
-      await writeJson(paths.status, status);
-      if (shouldVerify) {
-        await setStage("verify-deployment");
-        status.deployment = await verifyDeployment(baseUrl, status, {
-          attempts: verifyAttempts, delayMs: verifyDelayMs, timeoutMs: httpTimeoutMs,
-        });
-      } else status.deployment = { ...status.deployment, state: "pushed_unverified" };
-    }
+    if (autoPush) await deploy(preflight, true);
     Object.assign(status, { ok: true, stage: "completed", finishedAt: new Date().toISOString() });
     await writeJson(paths.status, status);
     console.log(JSON.stringify(status, null, 2));
@@ -278,7 +325,8 @@ async function main() {
     status.finishedAt = new Date().toISOString();
     status.promoted = promoted;
     if (autoPush && ["deploy-preflight", "deploy", "verify-deployment"].includes(status.stage)) {
-      status.deployment = { ...status.deployment, state: "failed", error: error.message };
+      status.deployment = { ...status.deployment,
+        state: status.deployment.state === "pushed_unverified" ? "pushed_unverified" : "failed", error: error.message };
     }
     if (!promoted) {
       try {
