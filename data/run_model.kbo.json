@@ -1,87 +1,87 @@
 {
   "modelType": "confirmed-lineup-poisson-v1",
   "featureSchemaVersion": 3,
-  "version": "trained-score-kbo-2026-10-06T17:00:23.171Z",
-  "trainedAt": "2026-10-06T17:00:23.276Z",
-  "intercept": -0.07540138396392905,
+  "version": "trained-score-kbo-2026-10-12T17:00:21.505Z",
+  "trainedAt": "2026-10-12T17:00:21.618Z",
+  "intercept": -0.03776441747277493,
   "coefficients": {
-    "lineupOps": 0.39351715052917197,
-    "pitchingFip": 0.40245790118920066,
-    "bullpenWorkload": 0.15368565240675391,
+    "lineupOps": 0.374285935521455,
+    "pitchingFip": 0.7103037214246449,
+    "bullpenWorkload": 0.10791868824143899,
     "park": 0,
-    "home": 0.06405248490151526
+    "home": 0.02296537586552547
   },
-  "samples": 80,
-  "trainSamples": 66,
-  "validSamples": 14,
+  "samples": 94,
+  "trainSamples": 87,
+  "validSamples": 7,
   "holdoutDays": 3,
   "trainingSources": {
-    "livePregame": 14,
+    "livePregame": 28,
     "historicalReconstruction": 66
   },
   "trainingRange": {
     "from": "20260410",
-    "to": "20260927"
+    "to": "20261009"
   },
   "validationRange": {
-    "from": "20261004",
-    "to": "20261006"
+    "from": "20261010",
+    "to": "20261012"
   },
   "validationIndependent": true,
   "trainingFromGameDate": "20260410",
-  "trainingToGameDate": "20260927",
-  "validationFromGameDate": "20261004",
-  "validationToGameDate": "20261006",
+  "trainingToGameDate": "20261009",
+  "validationFromGameDate": "20261010",
+  "validationToGameDate": "20261012",
   "metrics": {
     "train": {
-      "samples": 66,
+      "samples": 87,
       "range": {
         "from": "20260410",
-        "to": "20260927"
+        "to": "20261009"
       },
-      "poissonNll": 2.8321691181343858,
-      "mae": 2.8554548667899837,
-      "logLoss": 0.7110183026021246,
-      "brier": 0.2588963757981398,
-      "accuracy": 0.4307692307692308,
-      "decisiveGames": 65,
-      "drawGames": 1
+      "poissonNll": 2.826654219696354,
+      "mae": 2.8238433932031537,
+      "logLoss": 0.7145629399273551,
+      "brier": 0.2605337218833022,
+      "accuracy": 0.4823529411764706,
+      "decisiveGames": 85,
+      "drawGames": 2
     },
     "validation": {
-      "samples": 14,
+      "samples": 7,
       "range": {
-        "from": "20261004",
-        "to": "20261006"
+        "from": "20261010",
+        "to": "20261012"
       },
-      "poissonNll": 2.987824552416292,
-      "mae": 3.043681675560559,
-      "logLoss": 0.7011611649511214,
-      "brier": 0.25387557106179026,
-      "accuracy": 0.5384615384615384,
-      "decisiveGames": 13,
-      "drawGames": 1
+      "poissonNll": 2.546832869982734,
+      "mae": 2.5719863437386516,
+      "logLoss": 0.6931957528104442,
+      "brier": 0.2500497092643961,
+      "accuracy": 0.5714285714285714,
+      "decisiveGames": 7,
+      "drawGames": 0
     }
   },
   "baseline": {
-    "leagueRate": 5.606060606060606,
-    "homeWinShare": 0.5846153846153846,
+    "leagueRate": 5.5,
+    "homeWinShare": 0.5411764705882353,
     "trainingRange": {
       "from": "20260410",
-      "to": "20260927"
+      "to": "20261009"
     },
     "validation": {
-      "samples": 14,
+      "samples": 7,
       "range": {
-        "from": "20261004",
-        "to": "20261006"
+        "from": "20261010",
+        "to": "20261012"
       },
-      "poissonNll": 3.024108907194905,
-      "mae": 3.050865800865801,
-      "logLoss": 0.7996851822631412,
-      "brier": 0.3027218934911243,
-      "accuracy": 0.23076923076923078,
-      "decisiveGames": 13,
-      "drawGames": 1
+      "poissonNll": 2.560010698609453,
+      "mae": 2.7142857142857144,
+      "logLoss": 0.7319239674008274,
+      "brier": 0.2693425605536332,
+      "accuracy": 0.2857142857142857,
+      "decisiveGames": 7,
+      "drawGames": 0
     }
   }
 }
