@@ -1,8 +1,8 @@
 {
   "modelType": "confirmed-lineup-poisson-v1",
   "featureSchemaVersion": 3,
-  "version": "trained-score-kbo-2026-10-17T17:00:21.639Z",
-  "trainedAt": "2026-10-17T17:00:21.756Z",
+  "version": "trained-score-kbo-2026-10-18T17:00:21.388Z",
+  "trainedAt": "2026-10-18T17:00:21.501Z",
   "intercept": -0.03776441747277493,
   "coefficients": {
     "lineupOps": 0.374285935521455,
